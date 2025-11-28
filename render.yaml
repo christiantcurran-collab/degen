@@ -1,10 +1,8 @@
 services:
   - type: web
     name: premier-league-betting
-    runtime: python
-    buildCommand: chmod +x build.sh && ./build.sh
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
-    healthCheckPath: /ping
+    env: python
+    buildCommand: pip install -r requirements.txt && chmod +x build.sh && ./build.sh
     envVars:
       - key: ODDS_API_KEY
         sync: false

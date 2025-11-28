@@ -3534,6 +3534,25 @@ def ping():
     """Simple ping endpoint - no auth required"""
     return 'pong'
 
+@app.route('/test')
+def test():
+    """Test endpoint - no auth required"""
+    return jsonify({
+        'status': 'ok',
+        'app_name': 'Premier League Analytics',
+        'routes_count': len(list(app.url_map.iter_rules())),
+        'database_exists': os.path.exists(DATABASE)
+    })
+
+# Log startup info when module is imported (for gunicorn)
+print("=" * 60)
+print("Premier League Analytics - Starting up...")
+print("=" * 60)
+print(f"Database path: {DATABASE}")
+print(f"Database exists: {os.path.exists(DATABASE)}")
+print(f"Registered routes: {len(list(app.url_map.iter_rules()))}")
+print("=" * 60)
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     print(f"Starting app on port {port}...")
