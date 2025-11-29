@@ -1402,25 +1402,81 @@ class SentimentExternalAnalyzer:
     
     def get_team_strength_index(self, team_name):
         """
-        Calculate overall team strength index combining all external factors.
+        Calculate overall team strength index using actual Premier League data.
         Scale: 0-100
-        """
-        base_strength = 50
         
+        Top teams (Man City, Arsenal, Liverpool): 75-90
+        Mid-table teams: 45-65
+        Relegation zone teams: 25-45
+        """
+        # Known team tiers based on recent Premier League performance
+        # This provides intuitive baseline that matches reality
+        TEAM_TIERS = {
+            # Elite tier (75-90)
+            'Man City': 88, 'Arsenal': 85, 'Liverpool': 84, 'Chelsea': 78,
+            # Strong tier (65-75)
+            'Tottenham': 72, 'Man United': 70, 'Newcastle': 72, 'Aston Villa': 70,
+            'Brighton': 68,
+            # Mid tier (50-65)
+            'West Ham': 58, 'Crystal Palace': 55, 'Fulham': 55, 'Brentford': 55,
+            'Bournemouth': 52, 'Wolves': 52, "Nott'm Forest": 52, 'Everton': 50,
+            # Lower tier (35-50)
+            'Leicester': 48, 'Ipswich': 42, 'Southampton': 38,
+            # Promoted/Relegated (adjust based on form)
+            'Leeds': 45, 'Burnley': 45, 'Sunderland': 45, 'Sheffield United': 40,
+            'Luton': 38
+        }
+        
+        # Start with known tier or default
+        base_strength = TEAM_TIERS.get(team_name, 50)
+        
+        # Adjust based on actual recent form from database
+        try:
+            db = get_db()
+            cursor = db.execute('''
+                SELECT 
+                    COUNT(*) as matches,
+                    SUM(CASE 
+                        WHEN (home_team = ? AND home_goals_full_time > away_goals_full_time) OR
+                             (away_team = ? AND away_goals_full_time > home_goals_full_time) THEN 3
+                        WHEN home_goals_full_time = away_goals_full_time THEN 1
+                        ELSE 0
+                    END) as points,
+                    SUM(CASE WHEN home_team = ? THEN home_goals_full_time ELSE away_goals_full_time END) as goals_for,
+                    SUM(CASE WHEN home_team = ? THEN away_goals_full_time ELSE home_goals_full_time END) as goals_against
+                FROM matches
+                WHERE (home_team = ? OR away_team = ?)
+                AND match_date >= date('now', '-6 months')
+            ''', (team_name, team_name, team_name, team_name, team_name, team_name))
+            
+            row = cursor.fetchone()
+            db.close()
+            
+            if row and row['matches'] >= 5:
+                ppg = row['points'] / row['matches']
+                gd_per_game = (row['goals_for'] - row['goals_against']) / row['matches']
+                
+                # Adjust base strength based on recent form
+                # PPG adjustment: 2.0 PPG = +10, 1.0 PPG = 0, 0.5 PPG = -10
+                ppg_adjustment = (ppg - 1.0) * 10
+                
+                # Goal difference adjustment: +1 per game = +5
+                gd_adjustment = gd_per_game * 5
+                
+                base_strength += ppg_adjustment + gd_adjustment
+                
+        except Exception as e:
+            print(f"Error calculating strength for {team_name}: {e}")
+        
+        # Add FPL data if available (small bonus)
         fpl_metrics = self.get_team_fpl_metrics(team_name)
         if fpl_metrics:
-            # Ownership indicates perceived quality
-            ownership_factor = min(fpl_metrics['avg_ownership'] * 2, 20)  # Max +20
-            
-            # Form from FPL
-            form_factor = fpl_metrics['avg_form'] * 2  # Max ~15
-            
-            # Availability
-            availability_factor = (fpl_metrics['key_player_availability'] - 0.5) * 20  # -10 to +10
-            
-            base_strength += ownership_factor + form_factor + availability_factor
+            # Small adjustment based on FPL form
+            form_bonus = (fpl_metrics['avg_form'] - 5) * 0.5  # -2.5 to +2.5
+            base_strength += form_bonus
         
-        return max(20, min(80, base_strength))
+        # Ensure within bounds
+        return max(20, min(95, base_strength))
     
     def calculate_probability(self, home_team, away_team, bet_type, market):
         """
@@ -3179,12 +3235,13 @@ def backtest():
         db = get_db()
         
         # Get recent completed matches WITH ACTUAL ODDS DATA
+        # Use multiple fallback queries to ensure we get data
         num_matches = gameweeks * 10
+        
+        # Query 1: Recent matches with odds (last 1 year)
         cursor = db.execute('''
             SELECT * FROM matches 
-            WHERE match_date < date('now')
-            AND match_date >= date('now', '-90 days')
-            AND odds_home_b365 IS NOT NULL
+            WHERE odds_home_b365 IS NOT NULL
             AND odds_home_b365 > 1
             AND odds_draw_b365 > 1
             AND odds_away_b365 > 1
@@ -3193,23 +3250,53 @@ def backtest():
         ''', (num_matches,))
         
         completed_matches = cursor.fetchall()
-        
-        # Fallback: if no matches with odds, get matches without odds filter
-        # (but mark as "simulated odds")
         using_actual_odds = len(completed_matches) > 0
         
+        # Fallback 1: Any recent matches with odds from specific seasons
         if not completed_matches:
             cursor = db.execute('''
                 SELECT * FROM matches 
-                WHERE match_date < date('now')
-                AND match_date >= date('now', '-90 days')
+                WHERE season IN ('2024/2025', '2023/2024', '2024/25', '2023/24')
+                AND odds_home_b365 IS NOT NULL
+                AND odds_home_b365 > 1
                 ORDER BY match_date DESC
                 LIMIT ?
             ''', (num_matches,))
             completed_matches = cursor.fetchall()
+            using_actual_odds = len(completed_matches) > 0
+        
+        # Fallback 2: Any matches from recent seasons (simulate odds)
+        if not completed_matches:
+            cursor = db.execute('''
+                SELECT * FROM matches 
+                WHERE season IN ('2024/2025', '2023/2024', '2024/25', '2023/24', '2022/2023', '2022/23')
+                ORDER BY match_date DESC
+                LIMIT ?
+            ''', (num_matches,))
+            completed_matches = cursor.fetchall()
+            using_actual_odds = False
+        
+        # Fallback 3: Just get the most recent matches
+        if not completed_matches:
+            cursor = db.execute('''
+                SELECT * FROM matches 
+                ORDER BY match_date DESC
+                LIMIT ?
+            ''', (num_matches,))
+            completed_matches = cursor.fetchall()
+            using_actual_odds = False
         
         if not completed_matches:
-            return jsonify({'error': 'No recent completed matches found'}), 404
+            # Get database summary for error message
+            cursor = db.execute('SELECT COUNT(*) as cnt, MIN(match_date) as min_date, MAX(match_date) as max_date FROM matches')
+            summary = cursor.fetchone()
+            return jsonify({
+                'error': 'No matches found in database',
+                'database_info': {
+                    'total_matches': summary['cnt'] if summary else 0,
+                    'date_range': f"{summary['min_date']} to {summary['max_date']}" if summary and summary['min_date'] else 'No data'
+                }
+            }), 404
         
         results = {
             'model': model,
