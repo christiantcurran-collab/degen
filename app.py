@@ -34,7 +34,7 @@ ODDS_LAST_FETCH = None
 FPL_API_BASE = 'https://fantasy.premierleague.com/api'
 TWITTER_BEARER_TOKEN = os.environ.get('TWITTER_BEARER_TOKEN', '')  # Optional - for X sentiment
 
-# Premier League Team Mappings (FPL names to our DB names)
+# Premier League Team Mappings (various formats to DB names)
 FPL_TEAM_MAPPING = {
     'Arsenal': 'Arsenal',
     'Aston Villa': 'Aston Villa',
@@ -61,6 +61,83 @@ FPL_TEAM_MAPPING = {
     'Burnley': 'Burnley',
     'Sunderland': 'Sunderland'
 }
+
+# Extended team name normalization (API names -> DB names)
+TEAM_NAME_NORMALIZATION = {
+    # Odds API names
+    'Manchester City': 'Man City',
+    'Manchester United': 'Man United',
+    'Tottenham Hotspur': 'Tottenham',
+    'Tottenham': 'Tottenham',
+    'Brighton and Hove Albion': 'Brighton',
+    'Brighton & Hove Albion': 'Brighton',
+    'Newcastle United': 'Newcastle',
+    'West Ham United': 'West Ham',
+    'Wolverhampton Wanderers': 'Wolves',
+    'Wolverhampton': 'Wolves',
+    'Nottingham Forest': "Nott'm Forest",
+    'Leicester City': 'Leicester',
+    'Leeds United': 'Leeds',
+    'AFC Bournemouth': 'Bournemouth',
+    'Ipswich Town': 'Ipswich',
+    # Short forms
+    'Man City': 'Man City',
+    'Man United': 'Man United',
+    'Man Utd': 'Man United',
+    # Database names (already normalized)
+    'Arsenal': 'Arsenal',
+    'Aston Villa': 'Aston Villa',
+    'Bournemouth': 'Bournemouth',
+    'Brentford': 'Brentford',
+    'Brighton': 'Brighton',
+    'Chelsea': 'Chelsea',
+    'Crystal Palace': 'Crystal Palace',
+    'Everton': 'Everton',
+    'Fulham': 'Fulham',
+    'Ipswich': 'Ipswich',
+    'Leicester': 'Leicester',
+    'Liverpool': 'Liverpool',
+    'Newcastle': 'Newcastle',
+    "Nott'm Forest": "Nott'm Forest",
+    'Southampton': 'Southampton',
+    'Tottenham': 'Tottenham',
+    'West Ham': 'West Ham',
+    'Wolves': 'Wolves',
+    'Leeds': 'Leeds',
+    'Burnley': 'Burnley',
+    'Sunderland': 'Sunderland',
+    'Sheffield United': 'Sheffield United',
+    'Luton': 'Luton',
+    'Luton Town': 'Luton'
+}
+
+# Base ELO ratings based on actual Premier League quality (updated Nov 2024)
+# These reflect true team quality, not just 1500 for everyone
+BASE_ELO_RATINGS = {
+    # Elite tier
+    'Liverpool': 1850, 'Man City': 1840, 'Arsenal': 1820, 'Chelsea': 1750,
+    # Strong tier
+    'Tottenham': 1700, 'Newcastle': 1690, 'Aston Villa': 1680, 'Man United': 1660,
+    'Brighton': 1650, "Nott'm Forest": 1640,
+    # Mid tier  
+    'Bournemouth': 1580, 'Fulham': 1570, 'West Ham': 1560, 'Brentford': 1550,
+    'Crystal Palace': 1540, 'Everton': 1520, 'Wolves': 1510,
+    # Lower tier
+    'Leicester': 1480, 'Ipswich': 1420, 'Southampton': 1400,
+    # Promoted/Other
+    'Leeds': 1450, 'Burnley': 1440, 'Sunderland': 1430, 'Sheffield United': 1380, 'Luton': 1370
+}
+
+def normalize_team_name(team_name):
+    """Normalize team name to database format."""
+    if not team_name:
+        return team_name
+    return TEAM_NAME_NORMALIZATION.get(team_name, team_name)
+
+def get_base_elo(team_name):
+    """Get base ELO for a team (before match adjustments)."""
+    normalized = normalize_team_name(team_name)
+    return BASE_ELO_RATINGS.get(normalized, 1500)
 
 def get_db():
     """Get database connection"""
@@ -760,40 +837,47 @@ class FormMomentumAnalyzer:
     def calculate_elo_rating(self, team_name, as_of_date=None):
         """
         Calculate ELO-style rating for a team based on historical performance.
-        Starting ELO: 1500
-        K-factor: 32 for recent matches, 16 for older
+        Uses realistic base ELO from current season standings, adjusted by recent results.
         """
-        if team_name in self._elo_ratings:
-            return self._elo_ratings[team_name]
+        # Normalize team name first
+        normalized_name = normalize_team_name(team_name)
         
-        base_elo = 1500
+        if normalized_name in self._elo_ratings:
+            return self._elo_ratings[normalized_name]
         
-        # Get all matches for the team in last 3 years
+        # Use realistic base ELO based on team quality
+        base_elo = get_base_elo(normalized_name)
+        
+        # Get recent matches for the team (last 6 months for form adjustment)
         query = """
             SELECT * FROM matches 
             WHERE (home_team = ? OR away_team = ?)
-            AND match_date >= date('now', '-3 years')
+            AND match_date >= date('now', '-6 months')
             ORDER BY match_date ASC
         """
-        cursor = self.db.execute(query, (team_name, team_name))
+        cursor = self.db.execute(query, (normalized_name, normalized_name))
         matches = cursor.fetchall()
         
         if not matches:
-            self._elo_ratings[team_name] = base_elo
+            # No recent matches, use base ELO
+            self._elo_ratings[normalized_name] = base_elo
             return base_elo
         
+        # Start from base and adjust based on recent form
         elo = base_elo
         
         for i, match in enumerate(matches):
-            is_home = match['home_team'] == team_name
+            is_home = match['home_team'] == normalized_name
             
             # Goal difference
             if is_home:
                 goals_for = match['home_goals_full_time']
                 goals_against = match['away_goals_full_time']
+                opponent = match['away_team']
             else:
                 goals_for = match['away_goals_full_time']
                 goals_against = match['home_goals_full_time']
+                opponent = match['home_team']
             
             # Result: 1 = win, 0.5 = draw, 0 = loss
             if goals_for > goals_against:
@@ -803,8 +887,11 @@ class FormMomentumAnalyzer:
             else:
                 result = 0
             
-            # Expected result based on current ELO (simplified - assume opponent at 1500)
-            expected = 1 / (1 + 10 ** ((1500 - elo) / 400))
+            # Get opponent's base ELO for expected calculation
+            opponent_elo = get_base_elo(opponent)
+            
+            # Expected result based on ELO difference
+            expected = 1 / (1 + 10 ** ((opponent_elo - elo) / 400))
             
             # K-factor: higher for recent matches
             recency_factor = (i + 1) / len(matches)  # 0 to 1
@@ -1079,55 +1166,73 @@ class FormMomentumAnalyzer:
         return None
     
     def _calculate_moneyline(self, home_elo, away_elo, home_form, away_form, h2h, home_mom, away_mom, market):
-        """Calculate moneyline probability using form & momentum model."""
+        """
+        Calculate moneyline probability using form & momentum model.
         
-        # 1. ELO component (30%)
+        Key principle: ELO reflects true team quality and should dominate,
+        with form/momentum providing small adjustments.
+        """
+        
+        # 1. ELO component (PRIMARY - 50% weight)
+        # This is the most important factor - reflects actual team quality
         elo_diff = home_elo - away_elo
-        # Add home advantage of ~65 ELO points
-        elo_diff += 65
+        # Add home advantage of ~80 ELO points (historically proven)
+        elo_diff += 80
         home_elo_prob = 1 / (1 + 10 ** (-elo_diff / 400))
+        away_elo_prob = 1 - home_elo_prob
         
-        # 2. Form component (35%)
-        home_form_score = home_form['form_score']
-        away_form_score = away_form['form_score']
-        form_diff = home_form_score - away_form_score + 0.1  # Home advantage
-        home_form_prob = 0.5 + (form_diff * 0.4)  # Scale to reasonable range
-        home_form_prob = max(0.1, min(0.9, home_form_prob))
+        # 2. Form component (25% weight)
+        # Recent form provides short-term adjustment
+        home_form_score = home_form.get('form_score', 0.5)
+        away_form_score = away_form.get('form_score', 0.5)
+        form_diff = home_form_score - away_form_score + 0.05  # Small home boost
+        home_form_prob = 0.5 + (form_diff * 0.25)  # More conservative scaling
+        home_form_prob = max(0.15, min(0.85, home_form_prob))
         
-        # 3. Head-to-head component (15%)
-        if h2h and h2h['matches'] >= 3:
-            h2h_home_prob = (h2h['home_win_rate'] + (h2h['draw_rate'] * 0.4))
-            h2h_away_prob = (h2h['away_win_rate'] + (h2h['draw_rate'] * 0.4))
+        # 3. Head-to-head component (10% weight)
+        if h2h and h2h.get('matches', 0) >= 3:
+            h2h_home_prob = h2h.get('home_win_rate', 0.45) + (h2h.get('draw_rate', 0.25) * 0.3)
         else:
-            h2h_home_prob = 0.5
-            h2h_away_prob = 0.5
+            # Default to ELO-based expectation
+            h2h_home_prob = home_elo_prob
         
-        # 4. Momentum component (20%)
-        momentum_diff = home_mom['score'] - away_mom['score']
-        home_momentum_prob = 0.5 + (momentum_diff * 0.15)
-        home_momentum_prob = max(0.2, min(0.8, home_momentum_prob))
+        # 4. Momentum component (15% weight)
+        momentum_diff = home_mom.get('score', 0) - away_mom.get('score', 0)
+        home_momentum_prob = 0.5 + (momentum_diff * 0.1)  # Smaller impact
+        home_momentum_prob = max(0.25, min(0.75, home_momentum_prob))
         
-        # Combine with weights
-        home_win_prob = (
-            home_elo_prob * 0.30 +
-            home_form_prob * 0.35 +
-            h2h_home_prob * 0.15 +
-            home_momentum_prob * 0.20
+        # Combine with weights - ELO dominates!
+        home_win_base = (
+            home_elo_prob * 0.50 +      # ELO is primary
+            home_form_prob * 0.25 +     # Form is secondary
+            h2h_home_prob * 0.10 +      # H2H is minor
+            home_momentum_prob * 0.15   # Momentum is minor
         )
         
-        # Calculate away and draw probabilities
-        away_win_prob = 1 - home_win_prob
+        # Draw probability calculation
+        # Draws are more likely when teams are evenly matched
+        elo_closeness = 1 - abs(home_elo - away_elo) / 500  # 0-1 scale
+        elo_closeness = max(0, min(1, elo_closeness))
+        base_draw_prob = 0.24  # PL average draw rate
+        draw_prob = base_draw_prob + (elo_closeness * 0.08)  # 24-32% range
+        draw_prob = min(0.32, draw_prob)
         
-        # Estimate draw probability based on form similarity and historical data
-        form_similarity = 1 - abs(home_form_score - away_form_score)
-        base_draw_prob = 0.26  # PL average is ~26%
-        draw_prob = base_draw_prob * (1 + form_similarity * 0.3)
-        draw_prob = min(0.35, draw_prob)
-        
-        # Adjust win probabilities for draws
+        # Calculate final probabilities
+        # Start from combined base, allocate draw, then split remainder
         remaining = 1 - draw_prob
-        home_win_prob = home_win_prob * remaining
-        away_win_prob = away_win_prob * remaining
+        home_win_prob = home_win_base * remaining
+        away_win_prob = (1 - home_win_base) * remaining
+        
+        # Ensure away probability isn't too high for weak teams at strong home grounds
+        # If ELO difference is > 200 (big mismatch), cap away win
+        if home_elo - away_elo > 200:
+            max_away = 0.15 + ((250 - (home_elo - away_elo)) / 250) * 0.10
+            max_away = max(0.08, min(0.25, max_away))
+            if away_win_prob > max_away:
+                excess = away_win_prob - max_away
+                away_win_prob = max_away
+                home_win_prob += excess * 0.7
+                draw_prob += excess * 0.3
         
         # Normalize
         total = home_win_prob + away_win_prob + draw_prob
@@ -1409,26 +1514,29 @@ class SentimentExternalAnalyzer:
         Mid-table teams: 45-65
         Relegation zone teams: 25-45
         """
+        # Normalize team name first
+        normalized_name = normalize_team_name(team_name)
+        
         # Known team tiers based on recent Premier League performance
         # This provides intuitive baseline that matches reality
         TEAM_TIERS = {
-            # Elite tier (75-90)
-            'Man City': 88, 'Arsenal': 85, 'Liverpool': 84, 'Chelsea': 78,
-            # Strong tier (65-75)
-            'Tottenham': 72, 'Man United': 70, 'Newcastle': 72, 'Aston Villa': 70,
-            'Brighton': 68,
-            # Mid tier (50-65)
-            'West Ham': 58, 'Crystal Palace': 55, 'Fulham': 55, 'Brentford': 55,
-            'Bournemouth': 52, 'Wolves': 52, "Nott'm Forest": 52, 'Everton': 50,
+            # Elite tier (80-92)
+            'Liverpool': 92, 'Man City': 90, 'Arsenal': 88, 'Chelsea': 80,
+            # Strong tier (68-78)
+            'Tottenham': 75, 'Newcastle': 74, 'Aston Villa': 73, 'Man United': 70,
+            'Brighton': 70, "Nott'm Forest": 68,
+            # Mid tier (52-65)
+            'Bournemouth': 60, 'Fulham': 58, 'West Ham': 56, 'Brentford': 55,
+            'Crystal Palace': 54, 'Everton': 52, 'Wolves': 52,
             # Lower tier (35-50)
-            'Leicester': 48, 'Ipswich': 42, 'Southampton': 38,
-            # Promoted/Relegated (adjust based on form)
-            'Leeds': 45, 'Burnley': 45, 'Sunderland': 45, 'Sheffield United': 40,
-            'Luton': 38
+            'Leicester': 48, 'Ipswich': 40, 'Southampton': 35,
+            # Promoted/Relegated
+            'Leeds': 45, 'Burnley': 44, 'Sunderland': 43, 'Sheffield United': 38,
+            'Luton': 35
         }
         
         # Start with known tier or default
-        base_strength = TEAM_TIERS.get(team_name, 50)
+        base_strength = TEAM_TIERS.get(normalized_name, 50)
         
         # Adjust based on actual recent form from database
         try:
@@ -1447,7 +1555,7 @@ class SentimentExternalAnalyzer:
                 FROM matches
                 WHERE (home_team = ? OR away_team = ?)
                 AND match_date >= date('now', '-6 months')
-            ''', (team_name, team_name, team_name, team_name, team_name, team_name))
+            ''', (normalized_name, normalized_name, normalized_name, normalized_name, normalized_name, normalized_name))
             
             row = cursor.fetchone()
             db.close()
@@ -1457,22 +1565,22 @@ class SentimentExternalAnalyzer:
                 gd_per_game = (row['goals_for'] - row['goals_against']) / row['matches']
                 
                 # Adjust base strength based on recent form
-                # PPG adjustment: 2.0 PPG = +10, 1.0 PPG = 0, 0.5 PPG = -10
-                ppg_adjustment = (ppg - 1.0) * 10
+                # PPG adjustment: 2.0 PPG = +5, 1.0 PPG = 0, 0.5 PPG = -5
+                ppg_adjustment = (ppg - 1.3) * 5  # 1.3 is league average
                 
-                # Goal difference adjustment: +1 per game = +5
-                gd_adjustment = gd_per_game * 5
+                # Goal difference adjustment: +1 per game = +3
+                gd_adjustment = gd_per_game * 3
                 
                 base_strength += ppg_adjustment + gd_adjustment
                 
         except Exception as e:
-            print(f"Error calculating strength for {team_name}: {e}")
+            print(f"Error calculating strength for {normalized_name}: {e}")
         
         # Add FPL data if available (small bonus)
-        fpl_metrics = self.get_team_fpl_metrics(team_name)
+        fpl_metrics = self.get_team_fpl_metrics(normalized_name)
         if fpl_metrics:
             # Small adjustment based on FPL form
-            form_bonus = (fpl_metrics['avg_form'] - 5) * 0.5  # -2.5 to +2.5
+            form_bonus = (fpl_metrics['avg_form'] - 5) * 0.3  # -1.5 to +1.5
             base_strength += form_bonus
         
         # Ensure within bounds
@@ -3169,49 +3277,71 @@ class BacktestAnalyzer:
         """
         Calculate probability for a market using only historical data.
         No lookahead bias - only uses matches before cutoff_date.
+        Uses realistic base ELO ratings combined with form.
         """
-        home_stats = self.get_team_stats_before_date(home_team)
-        away_stats = self.get_team_stats_before_date(away_team)
+        # Normalize team names
+        home_normalized = normalize_team_name(home_team)
+        away_normalized = normalize_team_name(away_team)
         
-        if not home_stats or not away_stats:
-            return None
+        home_stats = self.get_team_stats_before_date(home_normalized)
+        away_stats = self.get_team_stats_before_date(away_normalized)
         
-        home_form = self.get_home_form_before_date(home_team)
-        away_form = self.get_away_form_before_date(away_team)
+        # Get base ELO ratings (reflects true team quality)
+        home_base_elo = get_base_elo(home_normalized)
+        away_base_elo = get_base_elo(away_normalized)
         
-        # Base probabilities from win rates
-        home_strength = (home_stats['win_rate'] * 0.4 + home_form['win_rate'] * 0.6)
-        away_strength = (away_stats['win_rate'] * 0.4 + away_form['win_rate'] * 0.6)
+        home_form = self.get_home_form_before_date(home_normalized)
+        away_form = self.get_away_form_before_date(away_normalized)
         
-        # Home advantage factor (historically ~10-15% boost)
-        home_advantage = 0.12
+        # ELO-based probability (primary factor - 60%)
+        elo_diff = home_base_elo - away_base_elo + 80  # +80 for home advantage
+        home_elo_prob = 1 / (1 + 10 ** (-elo_diff / 400))
         
-        # Goal-based adjustment
-        home_attack = home_stats['avg_scored'] / 1.5  # Normalized to league average
-        away_attack = away_stats['avg_scored'] / 1.5
-        home_defense = 1.5 / home_stats['avg_conceded'] if home_stats['avg_conceded'] > 0 else 1
-        away_defense = 1.5 / away_stats['avg_conceded'] if away_stats['avg_conceded'] > 0 else 1
+        # Form-based adjustment (secondary - 40%)
+        if home_stats and away_stats:
+            # Win rate difference with form
+            home_strength = home_stats['win_rate'] * 0.4 + home_form['win_rate'] * 0.6
+            away_strength = away_stats['win_rate'] * 0.4 + away_form['win_rate'] * 0.6
+            
+            # Goal difference factor
+            home_gd = (home_stats['avg_scored'] - home_stats['avg_conceded']) if home_stats['avg_scored'] else 0
+            away_gd = (away_stats['avg_scored'] - away_stats['avg_conceded']) if away_stats['avg_scored'] else 0
+            gd_factor = (home_gd - away_gd) * 0.03  # Small adjustment
+            
+            form_home_prob = 0.5 + (home_strength - away_strength) * 0.3 + gd_factor
+            form_home_prob = max(0.15, min(0.85, form_home_prob))
+        else:
+            form_home_prob = home_elo_prob  # Fall back to ELO
         
-        # Combined strength with attack/defense
-        home_combined = (home_strength + home_advantage) * (home_attack * 0.5 + away_defense * 0.5)
-        away_combined = away_strength * (away_attack * 0.5 + home_defense * 0.5)
+        # Combine ELO (60%) and form (40%)
+        home_win_base = home_elo_prob * 0.60 + form_home_prob * 0.40
         
-        # Normalize to probabilities
-        total = home_combined + away_combined + 0.25  # 0.25 for draw
+        # Draw probability - more likely when teams are close
+        elo_closeness = 1 - abs(home_base_elo - away_base_elo) / 500
+        elo_closeness = max(0, min(1, elo_closeness))
+        draw_prob = 0.24 + (elo_closeness * 0.06)  # 24-30%
         
+        # Calculate final probabilities
+        remaining = 1 - draw_prob
+        home_win_prob = home_win_base * remaining
+        away_win_prob = (1 - home_win_base) * remaining
+        
+        # Cap away probability for big mismatches
+        if home_base_elo - away_base_elo > 150:
+            max_away = 0.18
+            if away_win_prob > max_away:
+                excess = away_win_prob - max_away
+                away_win_prob = max_away
+                home_win_prob += excess * 0.6
+                draw_prob += excess * 0.4
+        
+        # Normalize
+        total = home_win_prob + away_win_prob + draw_prob
         probs = {
-            'home_win': home_combined / total,
-            'away_win': away_combined / total,
-            'draw': 0.25 / total
+            'home_win': home_win_prob / total,
+            'away_win': away_win_prob / total,
+            'draw': draw_prob / total
         }
-        
-        # Ensure probabilities sum to ~1 and are reasonable
-        total_prob = sum(probs.values())
-        probs = {k: v / total_prob for k, v in probs.items()}
-        
-        # Apply reasonable bounds
-        for k in probs:
-            probs[k] = max(0.05, min(0.85, probs[k]))
         
         return probs.get(market)
 
@@ -3222,10 +3352,16 @@ def backtest():
     """
     Backtest AI models against historical Premier League results.
     
-    KEY FEATURES FOR RELIABILITY:
+    GAMEWEEK-BASED POINT-IN-TIME TESTING:
+    - Groups matches by gameweek (matches on same weekend)
+    - For each gameweek, AI model only uses data from BEFORE that gameweek
+    - Tests predictions against actual results
+    - Repeats for each requested gameweek going back in time
+    
+    KEY FEATURES:
     1. Uses ACTUAL historical odds from football-data.co.uk (Bet365 odds)
     2. Prevents lookahead bias - AI only uses data from BEFORE each match
-    3. Tests only on matches that have actual historical odds data
+    3. Groups matches by date for realistic gameweek simulation
     """
     try:
         model = request.args.get('model', 'overall')
@@ -3234,60 +3370,27 @@ def backtest():
         
         db = get_db()
         
-        # Get recent completed matches WITH ACTUAL ODDS DATA
-        # Use multiple fallback queries to ensure we get data
-        num_matches = gameweeks * 10
-        
-        # Query 1: Recent matches with odds (last 1 year)
+        # Get all match dates to identify gameweeks
+        # A "gameweek" is matches played within 3 days of each other
         cursor = db.execute('''
-            SELECT * FROM matches 
+            SELECT DISTINCT match_date 
+            FROM matches 
             WHERE odds_home_b365 IS NOT NULL
             AND odds_home_b365 > 1
-            AND odds_draw_b365 > 1
-            AND odds_away_b365 > 1
             ORDER BY match_date DESC
-            LIMIT ?
-        ''', (num_matches,))
+        ''')
+        all_dates = [row['match_date'] for row in cursor.fetchall()]
         
-        completed_matches = cursor.fetchall()
-        using_actual_odds = len(completed_matches) > 0
-        
-        # Fallback 1: Any recent matches with odds from specific seasons
-        if not completed_matches:
+        # Fallback: get dates without odds filter
+        if not all_dates:
             cursor = db.execute('''
-                SELECT * FROM matches 
-                WHERE season IN ('2024/2025', '2023/2024', '2024/25', '2023/24')
-                AND odds_home_b365 IS NOT NULL
-                AND odds_home_b365 > 1
+                SELECT DISTINCT match_date 
+                FROM matches 
                 ORDER BY match_date DESC
-                LIMIT ?
-            ''', (num_matches,))
-            completed_matches = cursor.fetchall()
-            using_actual_odds = len(completed_matches) > 0
+            ''')
+            all_dates = [row['match_date'] for row in cursor.fetchall()]
         
-        # Fallback 2: Any matches from recent seasons (simulate odds)
-        if not completed_matches:
-            cursor = db.execute('''
-                SELECT * FROM matches 
-                WHERE season IN ('2024/2025', '2023/2024', '2024/25', '2023/24', '2022/2023', '2022/23')
-                ORDER BY match_date DESC
-                LIMIT ?
-            ''', (num_matches,))
-            completed_matches = cursor.fetchall()
-            using_actual_odds = False
-        
-        # Fallback 3: Just get the most recent matches
-        if not completed_matches:
-            cursor = db.execute('''
-                SELECT * FROM matches 
-                ORDER BY match_date DESC
-                LIMIT ?
-            ''', (num_matches,))
-            completed_matches = cursor.fetchall()
-            using_actual_odds = False
-        
-        if not completed_matches:
-            # Get database summary for error message
+        if not all_dates:
             cursor = db.execute('SELECT COUNT(*) as cnt, MIN(match_date) as min_date, MAX(match_date) as max_date FROM matches')
             summary = cursor.fetchone()
             return jsonify({
@@ -3298,15 +3401,71 @@ def backtest():
                 }
             }), 404
         
+        # Group dates into gameweeks (matches within 3 days = same gameweek)
+        gameweek_dates = []
+        current_gw = []
+        last_date = None
+        
+        for date_str in all_dates:
+            if last_date is None:
+                current_gw = [date_str]
+            else:
+                # Parse dates for comparison
+                try:
+                    from datetime import datetime
+                    current = datetime.strptime(date_str, '%Y-%m-%d')
+                    previous = datetime.strptime(last_date, '%Y-%m-%d')
+                    days_diff = abs((current - previous).days)
+                    
+                    if days_diff <= 4:  # Same gameweek
+                        current_gw.append(date_str)
+                    else:  # New gameweek
+                        if current_gw:
+                            gameweek_dates.append(current_gw)
+                        current_gw = [date_str]
+                except:
+                    current_gw.append(date_str)
+            
+            last_date = date_str
+        
+        if current_gw:
+            gameweek_dates.append(current_gw)
+        
+        # Limit to requested number of gameweeks
+        gameweek_dates = gameweek_dates[:gameweeks]
+        
+        # Get matches for each gameweek
+        all_matches = []
+        using_actual_odds = True
+        
+        for gw_dates in gameweek_dates:
+            placeholders = ','.join(['?' for _ in gw_dates])
+            cursor = db.execute(f'''
+                SELECT * FROM matches 
+                WHERE match_date IN ({placeholders})
+                ORDER BY match_date DESC
+            ''', gw_dates)
+            matches = cursor.fetchall()
+            all_matches.extend(matches)
+            
+            # Check if we have odds
+            for m in matches:
+                if not m['odds_home_b365'] or m['odds_home_b365'] <= 1:
+                    using_actual_odds = False
+        
+        if not all_matches:
+            return jsonify({'error': 'No matches found for backtesting'}), 404
+        
         results = {
             'model': model,
-            'gameweeks_analyzed': gameweeks,
+            'gameweeks_analyzed': len(gameweek_dates),
             'stake_per_bet': stake,
-            'total_matches': len(completed_matches),
+            'total_matches': len(all_matches),
             'using_actual_odds': using_actual_odds,
             'exchange_adjusted': True,
             'exchange_multiplier': round(EXCHANGE_ODDS_MULTIPLIER, 4),
-            'methodology': f'Point-in-time analysis with exchange-adjusted odds (+{(EXCHANGE_ODDS_MULTIPLIER-1)*100:.1f}%)',
+            'methodology': f'Gameweek-based point-in-time analysis ({len(gameweek_dates)} gameweeks)',
+            'date_range': f"{gameweek_dates[-1][-1] if gameweek_dates else 'N/A'} to {gameweek_dates[0][0] if gameweek_dates else 'N/A'}",
             'bets_placed': 0,
             'bets_won': 0,
             'bets_lost': 0,
@@ -3326,10 +3485,11 @@ def backtest():
                 'draw': {'bets': 0, 'wins': 0, 'profit': 0},
                 'away_win': {'bets': 0, 'wins': 0, 'profit': 0}
             },
+            'by_gameweek': [],
             'detailed_bets': []
         }
         
-        for match in completed_matches:
+        for match in all_matches:
             home_team = match['home_team']
             away_team = match['away_team']
             home_goals = match['home_goals_full_time']
