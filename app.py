@@ -111,7 +111,7 @@ TEAM_NAME_NORMALIZATION = {
     'Luton Town': 'Luton'
 }
 
-# Base ELO ratings based on actual Premier League quality (updated Nov 2024)
+# Base ELO ratings based on actual Premier League quality (2025/26 season)
 # These reflect true team quality, not just 1500 for everyone
 BASE_ELO_RATINGS = {
     # Elite tier
@@ -191,8 +191,9 @@ def import_historical_data():
     
     print("Importing Premier League data...")
     
-    # Import last 5 seasons for quick startup
-    seasons = ['2425', '2324', '2223', '2122', '2021']
+    # Import current season (2025/26) plus previous seasons
+    # 2526 = 2025/26 season (current)
+    seasons = ['2526', '2425', '2324', '2223', '2122']
     total = 0
     
     for season_code in seasons:
@@ -3374,52 +3375,47 @@ def backtest():
         from datetime import datetime, date
         today = date.today().isoformat()
         
-        # Get season filter - default to current season (2024/25)
-        # Premier League season runs Aug-May
-        current_month = datetime.now().month
-        current_year = datetime.now().year
-        if current_month >= 8:  # Aug onwards = new season
-            season_start_year = current_year
-        else:  # Jan-July = previous year's season
-            season_start_year = current_year - 1
+        # Current season is 2025/26 (started August 2025)
+        # We want to backtest on THIS season's completed matches
+        season_start_year = 2025
+        season_start = "2025-08-01"
         
-        # Current season date range
-        season_start = f"{season_start_year}-08-01"
-        
-        # Get all match dates from CURRENT SEASON that are COMPLETED (before today)
+        # Get all match dates from 2025/26 SEASON that are COMPLETED (before today)
         # A "gameweek" is matches played within 3 days of each other
         cursor = db.execute('''
             SELECT DISTINCT match_date 
             FROM matches 
             WHERE match_date >= ?
-            AND match_date < ?
-            AND odds_home_b365 IS NOT NULL
-            AND odds_home_b365 > 1
+            AND match_date <= ?
             ORDER BY match_date DESC
         ''', (season_start, today))
         all_dates = [row['match_date'] for row in cursor.fetchall()]
         
-        # Fallback: get dates without odds filter but still current season
+        # Fallback: Check what seasons we have in the database
         if not all_dates:
+            # Try to find 2025/26 season data by season name
             cursor = db.execute('''
                 SELECT DISTINCT match_date 
                 FROM matches 
-                WHERE match_date >= ?
-                AND match_date < ?
+                WHERE season LIKE '%2025%' OR season LIKE '%25/26%' OR season LIKE '%2526%'
                 ORDER BY match_date DESC
-            ''', (season_start, today))
+            ''')
             all_dates = [row['match_date'] for row in cursor.fetchall()]
         
-        # Second fallback: any recent completed matches
+        # Second fallback: get most recent matches (whatever season)
         if not all_dates:
             cursor = db.execute('''
                 SELECT DISTINCT match_date 
                 FROM matches 
-                WHERE match_date < ?
                 ORDER BY match_date DESC
                 LIMIT 100
-            ''', (today,))
+            ''')
             all_dates = [row['match_date'] for row in cursor.fetchall()]
+            
+        # Debug: Log what we found
+        print(f"Backtest: Found {len(all_dates)} unique match dates")
+        if all_dates:
+            print(f"Date range: {all_dates[-1]} to {all_dates[0]}")
         
         if not all_dates:
             cursor = db.execute('SELECT COUNT(*) as cnt, MIN(match_date) as min_date, MAX(match_date) as max_date FROM matches')
@@ -3487,8 +3483,8 @@ def backtest():
         if not all_matches:
             return jsonify({'error': 'No matches found for backtesting'}), 404
         
-        # Determine season string
-        season_str = f"{season_start_year}/{season_start_year + 1 - 2000}"
+        # Current season is 2025/26
+        season_str = "2025/26"
         
         results = {
             'model': model,
