@@ -1,0 +1,20 @@
+# Render ignore file - helps Render detect this as Python app
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.db
+*.sqlite
+*.sqlite3
+venv/
+env/
+ENV/
+.venv
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
