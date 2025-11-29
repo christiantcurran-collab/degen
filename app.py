@@ -111,37 +111,37 @@ TEAM_NAME_NORMALIZATION = {
     'Luton Town': 'Luton'
 }
 
-# Base ELO ratings based on actual Premier League quality (2025/26 season - GW13)
-# Updated to reflect current season form and standings
-# These reflect true team quality differences
+# Base ELO ratings based on actual 2025/26 Premier League standings (GW13)
+# IMPORTANT: Update these based on current table position!
+# These should reflect CURRENT form, not historical reputation
 BASE_ELO_RATINGS = {
-    # Elite tier (Top 4 quality)
-    'Liverpool': 1880,      # Top of league, exceptional form
-    'Arsenal': 1850,        # Title contenders, strong at home
-    'Man City': 1840,       # Slight dip but still elite
-    'Chelsea': 1780,        # Improving under new system
-    # Strong tier (Top 6-8)
-    'Newcastle': 1720,      # Strong this season
-    'Brighton': 1710,       # Consistently good
-    'Aston Villa': 1700,    # CL quality
-    'Tottenham': 1680,      # Inconsistent but capable
-    "Nott'm Forest": 1670,  # Surprising form
-    # Mid tier (9-14)
-    'Bournemouth': 1600,    # Solid mid-table
-    'Fulham': 1590,
-    'Brentford': 1580,
-    'Man United': 1570,     # Struggling this season
+    # Top 4 (based on actual 2025/26 standings)
+    'Arsenal': 1850,        # Near top of league
+    'Man City': 1840,       # Title contenders
+    'Chelsea': 1800,        # Strong this season
+    'Newcastle': 1780,      # Top 4 push
+    # Upper mid (5-9)
+    "Nott'm Forest": 1720,  # Surprising strong form
+    'Brighton': 1700,       # Consistently good
+    'Aston Villa': 1690,
+    'Bournemouth': 1680,    # Good form
+    'Fulham': 1660,
+    # Mid-table (10-14)
+    'Liverpool': 1620,      # Mid-table - below expectations
+    'Tottenham': 1610,      # Struggling
+    'Brentford': 1600,
+    'Man United': 1580,     # Inconsistent
     'West Ham': 1560,
-    'Crystal Palace': 1550,
     # Lower mid (15-17)
+    'Crystal Palace': 1530,
     'Everton': 1520,
-    'Wolves': 1510,
-    'Leicester': 1500,
+    'Wolves': 1500,
+    'Leicester': 1480,
     # Relegation zone (18-20)
     'Ipswich': 1450,
-    'Southampton': 1420,    # Bottom of league
-    # Other teams (if promoted)
-    'Leeds': 1480, 'Burnley': 1470, 'Sunderland': 1460, 
+    'Southampton': 1420,    # Bottom
+    # Other teams
+    'Leeds': 1500, 'Burnley': 1480, 'Sunderland': 1470, 
     'Sheffield United': 1400, 'Luton': 1390
 }
 
@@ -1538,16 +1538,16 @@ class SentimentExternalAnalyzer:
         # Known team tiers based on recent Premier League performance
         # This provides intuitive baseline that matches reality
         TEAM_TIERS = {
-            # Elite tier (85-95) - Title contenders
-            'Liverpool': 95, 'Arsenal': 92, 'Man City': 90, 'Chelsea': 82,
-            # Strong tier (72-80) - Top 6-8
-            'Newcastle': 78, 'Brighton': 77, 'Aston Villa': 76, 'Tottenham': 74,
-            "Nott'm Forest": 73,
-            # Mid tier (58-68) - Mid-table
-            'Bournemouth': 65, 'Fulham': 63, 'Brentford': 62, 'Man United': 60,
-            'West Ham': 59, 'Crystal Palace': 58,
+            # Top 4 (85-95) - Based on 2025/26 standings
+            'Arsenal': 92, 'Man City': 90, 'Chelsea': 85, 'Newcastle': 82,
+            # Upper mid (72-80)
+            "Nott'm Forest": 78, 'Brighton': 76, 'Aston Villa': 75, 
+            'Bournemouth': 74, 'Fulham': 72,
+            # Mid-table (58-68) - Liverpool struggling this season
+            'Liverpool': 65, 'Tottenham': 63, 'Brentford': 62, 
+            'Man United': 60, 'West Ham': 58,
             # Lower mid (48-55)
-            'Everton': 52, 'Wolves': 50, 'Leicester': 48,
+            'Crystal Palace': 54, 'Everton': 52, 'Wolves': 50, 'Leicester': 48,
             # Relegation zone (30-45)
             'Ipswich': 42, 'Southampton': 32,
             # Other
@@ -1887,46 +1887,88 @@ class CombinedAIAnalyzer:
         return breakdown
     
     def get_explanation(self, home_team, away_team, bet_type, market):
-        """Generate comprehensive explanation combining all models."""
+        """Generate comprehensive explanation combining all models with specific reasoning."""
         parts = []
         
-        # Get ELO from form analyzer
+        # Normalize names for lookup
+        home_norm = normalize_team_name(home_team)
+        away_norm = normalize_team_name(away_team)
+        
+        # Get ELO ratings
         try:
             home_elo = self.form_analyzer.calculate_elo_rating(home_team)
             away_elo = self.form_analyzer.calculate_elo_rating(away_team)
-            parts.append(f"⚡ ELO: {home_team[:3].upper()} {home_elo:.0f} vs {away_team[:3].upper()} {away_elo:.0f}")
+            elo_diff = home_elo - away_elo
+            
+            if elo_diff > 150:
+                elo_verdict = f"{home_norm} clearly stronger"
+            elif elo_diff > 50:
+                elo_verdict = f"{home_norm} favored"
+            elif elo_diff > -50:
+                elo_verdict = "Evenly matched"
+            elif elo_diff > -150:
+                elo_verdict = f"{away_norm} favored"
+            else:
+                elo_verdict = f"{away_norm} clearly stronger"
+            
+            parts.append(f"⚡ ELO: {home_norm} {home_elo:.0f} vs {away_norm} {away_elo:.0f} ({elo_verdict})")
         except:
             pass
         
-        # Get form from form analyzer
+        # Get recent form (last 5 games)
         try:
             home_form = self.form_analyzer.get_recent_form(home_team, 5, 'home')
             away_form = self.form_analyzer.get_recent_form(away_team, 5, 'away')
-            parts.append(f"📊 Form: {home_form['weighted_ppg']:.1f} vs {away_form['weighted_ppg']:.1f} PPG")
+            
+            home_ppg = home_form.get('weighted_ppg', 0)
+            away_ppg = away_form.get('weighted_ppg', 0)
+            
+            if home_ppg > 2.0:
+                home_form_desc = "excellent"
+            elif home_ppg > 1.5:
+                home_form_desc = "good"
+            elif home_ppg > 1.0:
+                home_form_desc = "average"
+            else:
+                home_form_desc = "poor"
+                
+            if away_ppg > 2.0:
+                away_form_desc = "excellent"
+            elif away_ppg > 1.5:
+                away_form_desc = "good"
+            elif away_ppg > 1.0:
+                away_form_desc = "average"
+            else:
+                away_form_desc = "poor"
+            
+            parts.append(f"📊 Form (5 games): {home_norm} {home_form_desc} ({home_ppg:.1f} PPG), {away_norm} {away_form_desc} ({away_ppg:.1f} PPG)")
         except:
             pass
         
-        # Get strength from sentiment analyzer
+        # Get league position based strength
         try:
             home_strength = self.sentiment_analyzer.get_team_strength_index(home_team)
             away_strength = self.sentiment_analyzer.get_team_strength_index(away_team)
-            parts.append(f"💪 Strength: {home_strength:.0f} vs {away_strength:.0f}")
+            
+            def get_tier(s):
+                if s >= 85: return "Top 4"
+                elif s >= 70: return "Top half"
+                elif s >= 55: return "Mid-table"
+                elif s >= 45: return "Lower half"
+                else: return "Relegation zone"
+            
+            parts.append(f"💪 Table position: {home_norm} {get_tier(home_strength)} ({home_strength:.0f}), {away_norm} {get_tier(away_strength)} ({away_strength:.0f})")
         except:
             pass
         
-        # Get injury info
-        try:
-            home_injury = self.sentiment_analyzer.get_injury_impact(home_team)
-            if 'Injuries:' in home_injury['description'] or 'injury crisis' in home_injury['description']:
-                parts.append(home_injury['description'])
-        except:
-            pass
+        # Add home advantage note
+        parts.append("🏟️ Home advantage: +100 ELO points applied")
         
-        # Get model breakdown
+        # Get model breakdown with probabilities
         breakdown = self.get_model_breakdown(home_team, away_team, bet_type, market)
-        probs = [f"{k[:4]}:{v*100:.0f}%" for k, v in breakdown.items() if v]
+        probs = [f"{k.replace('_', ' ').title()}: {v*100:.0f}%" for k, v in breakdown.items() if v]
         if probs:
-            parts.append(f"🤖 Models: {', '.join(probs)}")
+            parts.append(f"🤖 Model predictions: {', '.join(probs)}")
         
         return " | ".join(parts) if parts else "Combined AI model analysis"
 
@@ -3022,6 +3064,19 @@ def value_bets():
                             except:
                                 explanation = "🤖 Overall AI: Combined analysis from ELO, Form, Sentiment & Anomaly detection"
                         
+                        # Add value explanation - WHY this is a value bet
+                        edge_pct = (ai_prob - implied_prob) * 100
+                        value_reason = f"💰 VALUE EDGE: AI sees {ai_prob*100:.1f}% chance but odds imply only {implied_prob*100:.1f}% = {edge_pct:.1f}% edge"
+                        
+                        if ev >= 0.15:
+                            value_quality = "⭐⭐⭐ Strong Value"
+                        elif ev >= 0.08:
+                            value_quality = "⭐⭐ Good Value"
+                        else:
+                            value_quality = "⭐ Marginal Value"
+                        
+                        full_explanation = f"{value_quality}: {value_reason} | {explanation}"
+                        
                         value_bets_list.append({
                             'match': f"{home_team} vs {away_team}",
                             'home_team': home_team,
@@ -3036,7 +3091,7 @@ def value_bets():
                             'best_odds': round(best_odds, 2),
                             'bookmaker': h2h_odds[market]['bookmaker'],
                             'region': h2h_odds[market]['region'],
-                            'explanation': explanation
+                            'explanation': full_explanation
                         })
             
             # Analyze Goals over/under
@@ -3617,18 +3672,12 @@ def backtest():
                             'ev': ev
                         })
             
-            # If no value bets found, take highest probability prediction
+            # ONLY bet on positive EV - if no value bets exist, skip this match
+            # This is the correct approach - never bet on negative EV
             if not value_bets:
-                best_market = max(predictions.keys(), key=lambda k: predictions[k])
-                best_prob = predictions[best_market]
-                if best_prob >= 0.40:  # Only bet on strong predictions
-                    value_bets = [{
-                        'market': best_market,
-                        'ai_prob': best_prob,
-                        'implied_prob': 1/actual_odds.get(best_market, 2.5),
-                        'odds': actual_odds.get(best_market, 2.5),
-                        'ev': (best_prob * actual_odds.get(best_market, 2.5)) - 1
-                    }]
+                # Log skipped match
+                results['skipped_matches'] = results.get('skipped_matches', 0) + 1
+                continue  # Skip to next match - no value found
             
             # Process bets
             for bet in value_bets:
