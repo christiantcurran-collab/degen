@@ -2423,6 +2423,12 @@ def index_page():
     """Main page"""
     return render_template('index.html')
 
+@app.route('/fixture/<home_team>/<away_team>')
+@require_auth
+def fixture_page(home_team, away_team):
+    """Dedicated fixture analysis page"""
+    return render_template('fixture.html', home_team=home_team, away_team=away_team)
+
 @app.route('/api/fixtures')
 def get_fixtures():
     """Get upcoming fixtures"""
@@ -3763,6 +3769,236 @@ def fixture_details():
         elif away_strength - home_strength > 20:
             insights.append(f"💪 {away_norm} ({get_tier(away_strength)}) ranks higher than {home_norm} ({get_tier(home_strength)})")
         
+        # =====================================================================
+        # GOALS OVER/UNDER ANALYSIS
+        # =====================================================================
+        
+        # Get detailed goals stats for each team
+        goals_analysis = {
+            'home': {
+                'team': home_norm,
+                'scored_home': [],
+                'conceded_home': [],
+                'scored_away': [],
+                'conceded_away': [],
+                'avg_scored_home': 0,
+                'avg_conceded_home': 0,
+                'avg_scored_away': 0,
+                'avg_conceded_away': 0,
+                'avg_total_home': 0,
+                'avg_total_away': 0,
+                'over_2_5_home': 0,
+                'over_2_5_away': 0,
+                'btts_home': 0,
+                'btts_away': 0,
+                'recent_goals': []
+            },
+            'away': {
+                'team': away_norm,
+                'scored_home': [],
+                'conceded_home': [],
+                'scored_away': [],
+                'conceded_away': [],
+                'avg_scored_home': 0,
+                'avg_conceded_home': 0,
+                'avg_scored_away': 0,
+                'avg_conceded_away': 0,
+                'avg_total_home': 0,
+                'avg_total_away': 0,
+                'over_2_5_home': 0,
+                'over_2_5_away': 0,
+                'btts_home': 0,
+                'btts_away': 0,
+                'recent_goals': []
+            }
+        }
+        
+        try:
+            for team, key in [(home_team, 'home'), (away_team, 'away')]:
+                norm_team = normalize_team_name(team)
+                possible_names = [team, norm_team]
+                for full_name, short_name in TEAM_NAME_NORMALIZATION.items():
+                    if short_name == norm_team and full_name not in possible_names:
+                        possible_names.append(full_name)
+                
+                # Get home games
+                home_placeholders = ' OR '.join(['home_team = ?' for _ in possible_names])
+                home_query = f"""
+                    SELECT home_goals_full_time, away_goals_full_time, match_date, away_team
+                    FROM matches 
+                    WHERE ({home_placeholders})
+                    AND match_date < date('now')
+                    ORDER BY match_date DESC
+                    LIMIT 10
+                """
+                home_cursor = db.execute(home_query, tuple(possible_names))
+                home_matches = home_cursor.fetchall()
+                
+                for match in home_matches:
+                    scored = match['home_goals_full_time'] or 0
+                    conceded = match['away_goals_full_time'] or 0
+                    goals_analysis[key]['scored_home'].append(scored)
+                    goals_analysis[key]['conceded_home'].append(conceded)
+                    total = scored + conceded
+                    goals_analysis[key]['recent_goals'].append({
+                        'date': match['match_date'],
+                        'opponent': match['away_team'],
+                        'venue': 'H',
+                        'scored': scored,
+                        'conceded': conceded,
+                        'total': total
+                    })
+                
+                # Get away games
+                away_placeholders = ' OR '.join(['away_team = ?' for _ in possible_names])
+                away_query = f"""
+                    SELECT home_goals_full_time, away_goals_full_time, match_date, home_team
+                    FROM matches 
+                    WHERE ({away_placeholders})
+                    AND match_date < date('now')
+                    ORDER BY match_date DESC
+                    LIMIT 10
+                """
+                away_cursor = db.execute(away_query, tuple(possible_names))
+                away_matches = away_cursor.fetchall()
+                
+                for match in away_matches:
+                    scored = match['away_goals_full_time'] or 0
+                    conceded = match['home_goals_full_time'] or 0
+                    goals_analysis[key]['scored_away'].append(scored)
+                    goals_analysis[key]['conceded_away'].append(conceded)
+                    total = scored + conceded
+                    goals_analysis[key]['recent_goals'].append({
+                        'date': match['match_date'],
+                        'opponent': match['home_team'],
+                        'venue': 'A',
+                        'scored': scored,
+                        'conceded': conceded,
+                        'total': total
+                    })
+                
+                # Sort recent goals by date
+                goals_analysis[key]['recent_goals'].sort(key=lambda x: x['date'], reverse=True)
+                goals_analysis[key]['recent_goals'] = goals_analysis[key]['recent_goals'][:10]
+                
+                # Calculate averages
+                if goals_analysis[key]['scored_home']:
+                    goals_analysis[key]['avg_scored_home'] = round(sum(goals_analysis[key]['scored_home']) / len(goals_analysis[key]['scored_home']), 2)
+                    goals_analysis[key]['avg_conceded_home'] = round(sum(goals_analysis[key]['conceded_home']) / len(goals_analysis[key]['conceded_home']), 2)
+                    goals_analysis[key]['avg_total_home'] = round(goals_analysis[key]['avg_scored_home'] + goals_analysis[key]['avg_conceded_home'], 2)
+                    
+                    # Over 2.5 at home
+                    over_count = sum(1 for i in range(len(goals_analysis[key]['scored_home'])) 
+                                    if goals_analysis[key]['scored_home'][i] + goals_analysis[key]['conceded_home'][i] > 2.5)
+                    goals_analysis[key]['over_2_5_home'] = round(over_count / len(goals_analysis[key]['scored_home']) * 100, 1)
+                    
+                    # BTTS at home
+                    btts_count = sum(1 for i in range(len(goals_analysis[key]['scored_home'])) 
+                                    if goals_analysis[key]['scored_home'][i] > 0 and goals_analysis[key]['conceded_home'][i] > 0)
+                    goals_analysis[key]['btts_home'] = round(btts_count / len(goals_analysis[key]['scored_home']) * 100, 1)
+                
+                if goals_analysis[key]['scored_away']:
+                    goals_analysis[key]['avg_scored_away'] = round(sum(goals_analysis[key]['scored_away']) / len(goals_analysis[key]['scored_away']), 2)
+                    goals_analysis[key]['avg_conceded_away'] = round(sum(goals_analysis[key]['conceded_away']) / len(goals_analysis[key]['conceded_away']), 2)
+                    goals_analysis[key]['avg_total_away'] = round(goals_analysis[key]['avg_scored_away'] + goals_analysis[key]['avg_conceded_away'], 2)
+                    
+                    # Over 2.5 away
+                    over_count = sum(1 for i in range(len(goals_analysis[key]['scored_away'])) 
+                                    if goals_analysis[key]['scored_away'][i] + goals_analysis[key]['conceded_away'][i] > 2.5)
+                    goals_analysis[key]['over_2_5_away'] = round(over_count / len(goals_analysis[key]['scored_away']) * 100, 1)
+                    
+                    # BTTS away
+                    btts_count = sum(1 for i in range(len(goals_analysis[key]['scored_away'])) 
+                                    if goals_analysis[key]['scored_away'][i] > 0 and goals_analysis[key]['conceded_away'][i] > 0)
+                    goals_analysis[key]['btts_away'] = round(btts_count / len(goals_analysis[key]['scored_away']) * 100, 1)
+        
+        except Exception as e:
+            print(f"Error calculating goals analysis: {e}")
+        
+        # Calculate expected goals for this fixture using AI models
+        expected_goals = {
+            'home_expected': 0,
+            'away_expected': 0,
+            'total_expected': 0,
+            'over_2_5_probability': 0,
+            'under_2_5_probability': 0,
+            'over_3_5_probability': 0,
+            'btts_probability': 0,
+            'model_predictions': {}
+        }
+        
+        try:
+            # Home team expected goals: their attack vs away defense
+            home_attack = goals_analysis['home']['avg_scored_home']
+            away_defense = goals_analysis['away']['avg_conceded_away']
+            home_expected = (home_attack + away_defense) / 2 if home_attack > 0 and away_defense > 0 else 1.3
+            
+            # Away team expected goals: their attack vs home defense
+            away_attack = goals_analysis['away']['avg_scored_away']
+            home_defense = goals_analysis['home']['avg_conceded_home']
+            away_expected = (away_attack + home_defense) / 2 if away_attack > 0 and home_defense > 0 else 1.0
+            
+            # Adjust for team strength difference
+            strength_diff = (home_strength - away_strength) / 100
+            home_expected += strength_diff * 0.3
+            away_expected -= strength_diff * 0.3
+            
+            # Ensure minimums
+            home_expected = max(0.3, min(3.5, home_expected))
+            away_expected = max(0.2, min(3.0, away_expected))
+            
+            total_expected = home_expected + away_expected
+            
+            expected_goals['home_expected'] = round(home_expected, 2)
+            expected_goals['away_expected'] = round(away_expected, 2)
+            expected_goals['total_expected'] = round(total_expected, 2)
+            
+            # Calculate over/under probabilities using Poisson-like estimation
+            # Probability of over 2.5 goals
+            diff_from_2_5 = total_expected - 2.5
+            over_2_5_prob = 0.5 + (diff_from_2_5 * 0.18)
+            expected_goals['over_2_5_probability'] = round(max(0.05, min(0.95, over_2_5_prob)) * 100, 1)
+            expected_goals['under_2_5_probability'] = round(100 - expected_goals['over_2_5_probability'], 1)
+            
+            # Probability of over 3.5 goals
+            diff_from_3_5 = total_expected - 3.5
+            over_3_5_prob = 0.5 + (diff_from_3_5 * 0.20)
+            expected_goals['over_3_5_probability'] = round(max(0.05, min(0.90, over_3_5_prob)) * 100, 1)
+            
+            # BTTS probability
+            home_scores_prob = 1 - (0.4 ** home_expected)  # Higher xG = higher chance to score
+            away_scores_prob = 1 - (0.4 ** away_expected)
+            btts_prob = home_scores_prob * away_scores_prob
+            expected_goals['btts_probability'] = round(btts_prob * 100, 1)
+            
+            # Get model predictions for over/under
+            for line in ['2.5', '3.5']:
+                market = f"full_over_{line}"
+                try:
+                    form_prob = form_analyzer.calculate_probability(home_team, away_team, 'totals', market)
+                    expected_goals['model_predictions'][f'over_{line}'] = {
+                        'form_momentum': round(form_prob * 100, 1) if form_prob else None
+                    }
+                except:
+                    pass
+        
+        except Exception as e:
+            print(f"Error calculating expected goals: {e}")
+        
+        # Add goals insights
+        if expected_goals['total_expected'] > 2.8:
+            insights.append(f"⚽ High-scoring game expected: {expected_goals['total_expected']:.1f} total goals predicted")
+        elif expected_goals['total_expected'] < 2.0:
+            insights.append(f"⚽ Low-scoring game expected: {expected_goals['total_expected']:.1f} total goals predicted")
+        
+        if expected_goals['over_2_5_probability'] > 60:
+            insights.append(f"📈 Over 2.5 goals likely ({expected_goals['over_2_5_probability']}% probability)")
+        elif expected_goals['under_2_5_probability'] > 60:
+            insights.append(f"📉 Under 2.5 goals likely ({expected_goals['under_2_5_probability']}% probability)")
+        
+        if expected_goals['btts_probability'] > 65:
+            insights.append(f"🥅 Both teams likely to score ({expected_goals['btts_probability']}% probability)")
+        
         return jsonify({
             'home_team': home_team,
             'away_team': away_team,
@@ -3775,13 +4011,16 @@ def fixture_details():
             'head_to_head': h2h_analysis,
             'model_breakdown': model_breakdown,
             'recent_matches': recent_matches,
+            'goals_analysis': goals_analysis,
+            'expected_goals': expected_goals,
             'insights': insights,
             'methodology': {
                 'elo': 'ELO ratings start from base values and adjust based on match results. Home team gets +100 bonus.',
                 'form': 'Last 5 games weighted exponentially (recent games count more). PPG = Points Per Game.',
                 'momentum': 'Compares goal difference in recent games vs older games to detect trends.',
                 'strength': 'Based on current league position and FPL/external data.',
-                'combined': 'Weighted average: Complex 25%, Form 30%, Sentiment 25%, Anomaly 20%'
+                'combined': 'Weighted average: Complex 25%, Form 30%, Sentiment 25%, Anomaly 20%',
+                'expected_goals': 'Calculated from team attack/defense averages, adjusted for opponent strength.'
             }
         })
         

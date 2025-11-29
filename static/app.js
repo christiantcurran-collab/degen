@@ -1517,7 +1517,7 @@ function renderValueBets(bets) {
             <div class="value-bet-card ${isAnomaly ? 'anomaly-bet' : ''}">
                 ${isAnomaly ? '<div class="anomaly-badge">🔥 ANOMALY</div>' : ''}
                 <div class="bet-match-info">
-                    <h3 class="clickable-match" onclick="showFixtureDetails('${bet.home_team}', '${bet.away_team}')" title="Click for detailed analysis">${bet.match} 🔍</h3>
+                    <h3 class="clickable-match" onclick="goToFixturePage('${bet.home_team}', '${bet.away_team}')" title="Click for detailed analysis">${bet.match} 🔍</h3>
                     <div class="bet-market">${bet.bet_type} | ${bet.market}</div>
                     <div class="bet-time">${matchTimeStr}</div>
                     ${bet.explanation ? `<div class="bet-explanation"><em>${bet.explanation}</em></div>` : ''}
@@ -1555,56 +1555,9 @@ function renderValueBets(bets) {
     containerEl.innerHTML = html;
 }
 
-// Show fixture details modal
-async function showFixtureDetails(homeTeam, awayTeam) {
-    // Create modal if it doesn't exist
-    let modal = document.getElementById('fixture-modal');
-    if (!modal) {
-        modal = document.createElement('div');
-        modal.id = 'fixture-modal';
-        modal.className = 'fixture-modal';
-        modal.innerHTML = `
-            <div class="fixture-modal-content">
-                <span class="fixture-modal-close" onclick="closeFixtureModal()">&times;</span>
-                <div id="fixture-modal-body">Loading...</div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-    }
-    
-    modal.style.display = 'block';
-    const modalBody = document.getElementById('fixture-modal-body');
-    modalBody.innerHTML = '<div class="loading">Loading detailed analysis...</div>';
-    
-    try {
-        const response = await fetch(`/api/fixture-details?home_team=${encodeURIComponent(homeTeam)}&away_team=${encodeURIComponent(awayTeam)}`);
-        const data = await response.json();
-        
-        if (data.error) {
-            modalBody.innerHTML = `<div class="error-message">${data.error}</div>`;
-            return;
-        }
-        
-        modalBody.innerHTML = renderFixtureDetailsHTML(data);
-    } catch (error) {
-        console.error('Error loading fixture details:', error);
-        modalBody.innerHTML = `<div class="error-message">Failed to load fixture details. Please try again.</div>`;
-    }
-}
-
-function closeFixtureModal() {
-    const modal = document.getElementById('fixture-modal');
-    if (modal) {
-        modal.style.display = 'none';
-    }
-}
-
-// Close modal when clicking outside
-window.onclick = function(event) {
-    const modal = document.getElementById('fixture-modal');
-    if (event.target === modal) {
-        modal.style.display = 'none';
-    }
+// Navigate to fixture details page
+function goToFixturePage(homeTeam, awayTeam) {
+    window.location.href = `/fixture/${encodeURIComponent(homeTeam)}/${encodeURIComponent(awayTeam)}`;
 }
 
 function renderFixtureDetailsHTML(data) {

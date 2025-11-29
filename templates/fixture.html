@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ home_team }} vs {{ away_team }} - Analysis</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* Fixture Page Specific Styles */
+        .fixture-page {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: var(--spacing-xl);
+        }
+        
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+            color: var(--accent-blue);
+            text-decoration: none;
+            margin-bottom: var(--spacing-lg);
+            font-weight: 500;
+        }
+        
+        .back-link:hover {
+            color: var(--primary-blue);
+        }
+        
+        .fixture-header {
+            text-align: center;
+            background: linear-gradient(135deg, var(--primary-blue-dark) 0%, var(--primary-blue) 100%);
+            color: var(--white);
+            padding: var(--spacing-2xl);
+            border-radius: var(--radius-xl);
+            margin-bottom: var(--spacing-xl);
+        }
+        
+        .fixture-header h1 {
+            font-size: 2rem;
+            margin-bottom: var(--spacing-md);
+        }
+        
+        .fixture-vs {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: var(--spacing-xl);
+        }
+        
+        .fixture-team {
+            text-align: center;
+        }
+        
+        .fixture-team-name {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+        
+        .fixture-team-elo {
+            font-size: 0.875rem;
+            opacity: 0.8;
+        }
+        
+        .fixture-divider {
+            font-size: 1.5rem;
+            font-weight: 300;
+            opacity: 0.7;
+        }
+        
+        .loading-section {
+            text-align: center;
+            padding: var(--spacing-3xl);
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--gray-200);
+            border-radius: 50%;
+            border-top-color: var(--accent-blue);
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .section-card {
+            background: var(--white);
+            border-radius: var(--radius-lg);
+            padding: var(--spacing-xl);
+            margin-bottom: var(--spacing-lg);
+            box-shadow: var(--shadow-md);
+            border: 1px solid var(--gray-200);
+        }
+        
+        .section-card h2 {
+            color: var(--primary-blue);
+            font-size: 1.25rem;
+            margin-bottom: var(--spacing-lg);
+            border-bottom: 2px solid var(--accent-blue);
+            padding-bottom: var(--spacing-sm);
+        }
+        
+        .insights-box {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border-left: 4px solid var(--accent-blue);
+            padding: var(--spacing-lg);
+            border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+            margin-bottom: var(--spacing-lg);
+        }
+        
+        .insights-box h3 {
+            color: var(--primary-blue);
+            margin-bottom: var(--spacing-md);
+        }
+        
+        .insights-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        
+        .insights-list li {
+            padding: var(--spacing-xs) 0;
+            font-size: 0.9375rem;
+        }
+        
+        /* Goals Section */
+        .goals-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--spacing-xl);
+        }
+        
+        .goals-team-card {
+            background: var(--gray-50);
+            border-radius: var(--radius-lg);
+            padding: var(--spacing-lg);
+        }
+        
+        .goals-team-card h3 {
+            color: var(--primary-blue);
+            margin-bottom: var(--spacing-md);
+            text-align: center;
+        }
+        
+        .goals-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: var(--spacing-md);
+        }
+        
+        .goals-stat {
+            text-align: center;
+            padding: var(--spacing-md);
+            background: var(--white);
+            border-radius: var(--radius-md);
+        }
+        
+        .goals-stat-label {
+            font-size: 0.75rem;
+            color: var(--gray-600);
+            margin-bottom: var(--spacing-xs);
+        }
+        
+        .goals-stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-blue);
+        }
+        
+        .goals-stat-sub {
+            font-size: 0.75rem;
+            color: var(--gray-500);
+        }
+        
+        /* Expected Goals */
+        .expected-goals-section {
+            background: linear-gradient(135deg, var(--primary-blue) 0%, var(--accent-blue) 100%);
+            color: var(--white);
+            padding: var(--spacing-xl);
+            border-radius: var(--radius-lg);
+            margin: var(--spacing-lg) 0;
+        }
+        
+        .expected-goals-section h3 {
+            color: var(--white);
+            text-align: center;
+            margin-bottom: var(--spacing-lg);
+        }
+        
+        .xg-display {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: var(--spacing-2xl);
+            margin-bottom: var(--spacing-lg);
+        }
+        
+        .xg-team {
+            text-align: center;
+        }
+        
+        .xg-value {
+            font-size: 3rem;
+            font-weight: 700;
+        }
+        
+        .xg-label {
+            font-size: 0.875rem;
+            opacity: 0.8;
+        }
+        
+        .xg-total {
+            text-align: center;
+            padding: var(--spacing-md);
+            background: rgba(255,255,255,0.1);
+            border-radius: var(--radius-md);
+        }
+        
+        .xg-total-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+        
+        .xg-total-label {
+            font-size: 0.75rem;
+            opacity: 0.8;
+        }
+        
+        /* Probability Bars */
+        .probability-bars {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: var(--spacing-md);
+            margin-top: var(--spacing-lg);
+        }
+        
+        .prob-bar-item {
+            background: rgba(255,255,255,0.1);
+            padding: var(--spacing-md);
+            border-radius: var(--radius-md);
+        }
+        
+        .prob-bar-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: var(--spacing-xs);
+            font-size: 0.875rem;
+        }
+        
+        .prob-bar {
+            height: 8px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .prob-bar-fill {
+            height: 100%;
+            background: var(--white);
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        
+        /* Recent Goals Table */
+        .goals-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+        
+        .goals-table th,
+        .goals-table td {
+            padding: var(--spacing-sm) var(--spacing-md);
+            text-align: left;
+            border-bottom: 1px solid var(--gray-200);
+        }
+        
+        .goals-table th {
+            background: var(--gray-100);
+            font-weight: 600;
+            color: var(--gray-700);
+        }
+        
+        .goals-table tr:hover {
+            background: var(--gray-50);
+        }
+        
+        .venue-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .venue-home {
+            background: #dcfce7;
+            color: #166534;
+        }
+        
+        .venue-away {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        
+        .goals-high {
+            color: var(--success);
+            font-weight: 600;
+        }
+        
+        .goals-low {
+            color: var(--danger);
+            font-weight: 600;
+        }
+        
+        /* Model Table */
+        .model-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .model-table th,
+        .model-table td {
+            padding: var(--spacing-sm) var(--spacing-md);
+            text-align: center;
+            border-bottom: 1px solid var(--gray-200);
+        }
+        
+        .model-table th {
+            background: var(--primary-blue);
+            color: var(--white);
+        }
+        
+        .model-table th:first-child {
+            text-align: left;
+        }
+        
+        .model-table td:first-child {
+            text-align: left;
+            font-weight: 500;
+        }
+        
+        .model-table tr:hover {
+            background: var(--gray-50);
+        }
+        
+        .prob-highlight {
+            font-weight: 700;
+            color: var(--success);
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .fixture-page {
+                padding: var(--spacing-md);
+            }
+            
+            .goals-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .xg-display {
+                flex-direction: column;
+                gap: var(--spacing-lg);
+            }
+            
+            .probability-bars {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="fixture-page">
+        <a href="/index" class="back-link">← Back to Main</a>
+        
+        <div class="fixture-header" id="fixture-header">
+            <h1>Match Analysis</h1>
+            <div class="fixture-vs">
+                <div class="fixture-team">
+                    <div class="fixture-team-name" id="home-team-name">{{ home_team }}</div>
+                    <div class="fixture-team-elo" id="home-team-elo">Loading...</div>
+                </div>
+                <div class="fixture-divider">vs</div>
+                <div class="fixture-team">
+                    <div class="fixture-team-name" id="away-team-name">{{ away_team }}</div>
+                    <div class="fixture-team-elo" id="away-team-elo">Loading...</div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="loading-section" class="loading-section">
+            <div class="spinner"></div>
+            <p>Loading analysis...</p>
+        </div>
+        
+        <div id="content-section" style="display: none;">
+            <!-- Insights -->
+            <div class="insights-box">
+                <h3>🔑 Key Insights</h3>
+                <ul class="insights-list" id="insights-list">
+                </ul>
+            </div>
+            
+            <!-- Expected Goals Section -->
+            <div class="expected-goals-section" id="expected-goals-section">
+                <h3>⚽ Expected Goals</h3>
+                <div class="xg-display">
+                    <div class="xg-team">
+                        <div class="xg-value" id="xg-home">0.0</div>
+                        <div class="xg-label" id="xg-home-label">Home xG</div>
+                    </div>
+                    <div class="xg-total">
+                        <div class="xg-total-value" id="xg-total">0.0</div>
+                        <div class="xg-total-label">Total Expected</div>
+                    </div>
+                    <div class="xg-team">
+                        <div class="xg-value" id="xg-away">0.0</div>
+                        <div class="xg-label" id="xg-away-label">Away xG</div>
+                    </div>
+                </div>
+                <div class="probability-bars" id="probability-bars">
+                </div>
+            </div>
+            
+            <!-- Goals Analysis -->
+            <div class="section-card">
+                <h2>📊 Goals Statistics</h2>
+                <div class="goals-grid" id="goals-grid">
+                </div>
+            </div>
+            
+            <!-- Recent Goals -->
+            <div class="section-card">
+                <h2>📅 Recent Match Goals</h2>
+                <div class="goals-grid">
+                    <div>
+                        <h3 id="home-goals-title" style="color: var(--primary-blue); margin-bottom: var(--spacing-md);">Home Team</h3>
+                        <table class="goals-table">
+                            <thead>
+                                <tr>
+                                    <th>Opponent</th>
+                                    <th>Venue</th>
+                                    <th>Scored</th>
+                                    <th>Conceded</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="home-goals-table">
+                            </tbody>
+                        </table>
+                    </div>
+                    <div>
+                        <h3 id="away-goals-title" style="color: var(--primary-blue); margin-bottom: var(--spacing-md);">Away Team</h3>
+                        <table class="goals-table">
+                            <thead>
+                                <tr>
+                                    <th>Opponent</th>
+                                    <th>Venue</th>
+                                    <th>Scored</th>
+                                    <th>Conceded</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="away-goals-table">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Model Breakdown -->
+            <div class="section-card">
+                <h2>🤖 Model Predictions</h2>
+                <table class="model-table" id="model-table">
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th id="model-home-col">Home Win</th>
+                            <th>Draw</th>
+                            <th id="model-away-col">Away Win</th>
+                        </tr>
+                    </thead>
+                    <tbody id="model-table-body">
+                    </tbody>
+                </table>
+            </div>
+            
+            <!-- ELO & Form -->
+            <div class="section-card">
+                <h2>⚡ ELO & Form Analysis</h2>
+                <div id="elo-form-section">
+                </div>
+            </div>
+            
+            <!-- Methodology -->
+            <div class="section-card" style="background: var(--gray-50);">
+                <h2>📖 Methodology</h2>
+                <div id="methodology-section">
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const homeTeam = "{{ home_team }}";
+        const awayTeam = "{{ away_team }}";
+        
+        async function loadFixtureDetails() {
+            try {
+                const response = await fetch(`/api/fixture-details?home_team=${encodeURIComponent(homeTeam)}&away_team=${encodeURIComponent(awayTeam)}`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    document.getElementById('loading-section').innerHTML = `<p class="error-message">${data.error}</p>`;
+                    return;
+                }
+                
+                renderFixtureDetails(data);
+            } catch (error) {
+                console.error('Error loading fixture details:', error);
+                document.getElementById('loading-section').innerHTML = '<p class="error-message">Failed to load analysis. Please try again.</p>';
+            }
+        }
+        
+        function renderFixtureDetails(data) {
+            const home = data.home_team_normalized || data.home_team;
+            const away = data.away_team_normalized || data.away_team;
+            
+            // Update header
+            document.getElementById('home-team-name').textContent = home;
+            document.getElementById('away-team-name').textContent = away;
+            document.getElementById('home-team-elo').textContent = `ELO: ${data.elo?.home?.current || 'N/A'}`;
+            document.getElementById('away-team-elo').textContent = `ELO: ${data.elo?.away?.current || 'N/A'}`;
+            
+            // Insights
+            const insightsList = document.getElementById('insights-list');
+            insightsList.innerHTML = data.insights?.map(i => `<li>${i}</li>`).join('') || '<li>No insights available</li>';
+            
+            // Expected Goals
+            document.getElementById('xg-home').textContent = data.expected_goals?.home_expected || '0.0';
+            document.getElementById('xg-away').textContent = data.expected_goals?.away_expected || '0.0';
+            document.getElementById('xg-total').textContent = data.expected_goals?.total_expected || '0.0';
+            document.getElementById('xg-home-label').textContent = `${home} xG`;
+            document.getElementById('xg-away-label').textContent = `${away} xG`;
+            
+            // Probability bars
+            const probBars = document.getElementById('probability-bars');
+            probBars.innerHTML = `
+                <div class="prob-bar-item">
+                    <div class="prob-bar-label">
+                        <span>Over 2.5 Goals</span>
+                        <span>${data.expected_goals?.over_2_5_probability || 0}%</span>
+                    </div>
+                    <div class="prob-bar">
+                        <div class="prob-bar-fill" style="width: ${data.expected_goals?.over_2_5_probability || 0}%"></div>
+                    </div>
+                </div>
+                <div class="prob-bar-item">
+                    <div class="prob-bar-label">
+                        <span>Under 2.5 Goals</span>
+                        <span>${data.expected_goals?.under_2_5_probability || 0}%</span>
+                    </div>
+                    <div class="prob-bar">
+                        <div class="prob-bar-fill" style="width: ${data.expected_goals?.under_2_5_probability || 0}%"></div>
+                    </div>
+                </div>
+                <div class="prob-bar-item">
+                    <div class="prob-bar-label">
+                        <span>Over 3.5 Goals</span>
+                        <span>${data.expected_goals?.over_3_5_probability || 0}%</span>
+                    </div>
+                    <div class="prob-bar">
+                        <div class="prob-bar-fill" style="width: ${data.expected_goals?.over_3_5_probability || 0}%"></div>
+                    </div>
+                </div>
+                <div class="prob-bar-item">
+                    <div class="prob-bar-label">
+                        <span>Both Teams to Score</span>
+                        <span>${data.expected_goals?.btts_probability || 0}%</span>
+                    </div>
+                    <div class="prob-bar">
+                        <div class="prob-bar-fill" style="width: ${data.expected_goals?.btts_probability || 0}%"></div>
+                    </div>
+                </div>
+            `;
+            
+            // Goals Statistics
+            const goalsGrid = document.getElementById('goals-grid');
+            goalsGrid.innerHTML = `
+                <div class="goals-team-card">
+                    <h3>${home}</h3>
+                    <div class="goals-stats">
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Avg Scored (Home)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.home?.avg_scored_home || 0}</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Avg Conceded (Home)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.home?.avg_conceded_home || 0}</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Avg Total (Home)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.home?.avg_total_home || 0}</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Over 2.5 (Home)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.home?.over_2_5_home || 0}%</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">BTTS (Home)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.home?.btts_home || 0}%</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Games Analyzed</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.home?.scored_home?.length || 0}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="goals-team-card">
+                    <h3>${away}</h3>
+                    <div class="goals-stats">
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Avg Scored (Away)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.away?.avg_scored_away || 0}</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Avg Conceded (Away)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.away?.avg_conceded_away || 0}</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Avg Total (Away)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.away?.avg_total_away || 0}</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Over 2.5 (Away)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.away?.over_2_5_away || 0}%</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">BTTS (Away)</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.away?.btts_away || 0}%</div>
+                        </div>
+                        <div class="goals-stat">
+                            <div class="goals-stat-label">Games Analyzed</div>
+                            <div class="goals-stat-value">${data.goals_analysis?.away?.scored_away?.length || 0}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            // Recent Goals Tables
+            document.getElementById('home-goals-title').textContent = `${home} Recent Goals`;
+            document.getElementById('away-goals-title').textContent = `${away} Recent Goals`;
+            
+            const renderGoalsTable = (goals) => {
+                if (!goals || goals.length === 0) return '<tr><td colspan="5">No data available</td></tr>';
+                return goals.slice(0, 8).map(g => `
+                    <tr>
+                        <td>${g.opponent}</td>
+                        <td><span class="venue-badge ${g.venue === 'H' ? 'venue-home' : 'venue-away'}">${g.venue}</span></td>
+                        <td class="${g.scored >= 2 ? 'goals-high' : ''}">${g.scored}</td>
+                        <td class="${g.conceded >= 2 ? 'goals-low' : ''}">${g.conceded}</td>
+                        <td class="${g.total >= 3 ? 'goals-high' : g.total <= 1 ? 'goals-low' : ''}">${g.total}</td>
+                    </tr>
+                `).join('');
+            };
+            
+            document.getElementById('home-goals-table').innerHTML = renderGoalsTable(data.goals_analysis?.home?.recent_goals);
+            document.getElementById('away-goals-table').innerHTML = renderGoalsTable(data.goals_analysis?.away?.recent_goals);
+            
+            // Model Breakdown Table
+            document.getElementById('model-home-col').textContent = `${home} Win`;
+            document.getElementById('model-away-col').textContent = `${away} Win`;
+            
+            const models = ['complex', 'form_momentum', 'sentiment', 'overall'];
+            const modelNames = {
+                'complex': '🧠 Multi-Factor',
+                'form_momentum': '📈 Form & Momentum',
+                'sentiment': '💭 Sentiment & FPL',
+                'overall': '🤖 Combined AI'
+            };
+            
+            let modelTableHTML = '';
+            models.forEach(model => {
+                const homeWin = data.model_breakdown?.home_win?.[model]?.probability;
+                const draw = data.model_breakdown?.draw?.[model]?.probability;
+                const awayWin = data.model_breakdown?.away_win?.[model]?.probability;
+                
+                const maxProb = Math.max(homeWin || 0, draw || 0, awayWin || 0);
+                
+                modelTableHTML += `
+                    <tr>
+                        <td>${modelNames[model] || model}</td>
+                        <td class="${homeWin === maxProb ? 'prob-highlight' : ''}">${homeWin || '-'}%</td>
+                        <td class="${draw === maxProb ? 'prob-highlight' : ''}">${draw || '-'}%</td>
+                        <td class="${awayWin === maxProb ? 'prob-highlight' : ''}">${awayWin || '-'}%</td>
+                    </tr>
+                `;
+            });
+            document.getElementById('model-table-body').innerHTML = modelTableHTML;
+            
+            // ELO & Form Section
+            const eloFormSection = document.getElementById('elo-form-section');
+            eloFormSection.innerHTML = `
+                <div class="goals-grid">
+                    <div class="goals-team-card">
+                        <h3>${home}</h3>
+                        <div class="goals-stats">
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Current ELO</div>
+                                <div class="goals-stat-value">${data.elo?.home?.current || 'N/A'}</div>
+                                <div class="goals-stat-sub">Base: ${data.elo?.home?.base || 'N/A'}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">ELO Change</div>
+                                <div class="goals-stat-value" style="color: ${(data.elo?.home?.change || 0) >= 0 ? 'var(--success)' : 'var(--danger)'}">${(data.elo?.home?.change || 0) >= 0 ? '+' : ''}${data.elo?.home?.change || 0}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Form (PPG)</div>
+                                <div class="goals-stat-value">${data.form?.home?.last_5_home?.weighted_ppg?.toFixed(1) || 0}</div>
+                                <div class="goals-stat-sub">${data.form?.home?.rating || 'Unknown'}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Momentum</div>
+                                <div class="goals-stat-value">${data.momentum?.home?.interpretation || 'Stable'}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Strength Index</div>
+                                <div class="goals-stat-value">${data.strength?.home?.index || 50}</div>
+                                <div class="goals-stat-sub">${data.strength?.home?.tier || 'Unknown'}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Home Advantage</div>
+                                <div class="goals-stat-value" style="color: var(--success)">+100</div>
+                                <div class="goals-stat-sub">ELO bonus</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="goals-team-card">
+                        <h3>${away}</h3>
+                        <div class="goals-stats">
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Current ELO</div>
+                                <div class="goals-stat-value">${data.elo?.away?.current || 'N/A'}</div>
+                                <div class="goals-stat-sub">Base: ${data.elo?.away?.base || 'N/A'}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">ELO Change</div>
+                                <div class="goals-stat-value" style="color: ${(data.elo?.away?.change || 0) >= 0 ? 'var(--success)' : 'var(--danger)'}">${(data.elo?.away?.change || 0) >= 0 ? '+' : ''}${data.elo?.away?.change || 0}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Form (PPG)</div>
+                                <div class="goals-stat-value">${data.form?.away?.last_5_away?.weighted_ppg?.toFixed(1) || 0}</div>
+                                <div class="goals-stat-sub">${data.form?.away?.rating || 'Unknown'}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Momentum</div>
+                                <div class="goals-stat-value">${data.momentum?.away?.interpretation || 'Stable'}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Strength Index</div>
+                                <div class="goals-stat-value">${data.strength?.away?.index || 50}</div>
+                                <div class="goals-stat-sub">${data.strength?.away?.tier || 'Unknown'}</div>
+                            </div>
+                            <div class="goals-stat">
+                                <div class="goals-stat-label">Home Advantage</div>
+                                <div class="goals-stat-value" style="color: var(--gray-500)">0</div>
+                                <div class="goals-stat-sub">Playing away</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div style="text-align: center; margin-top: var(--spacing-lg); padding: var(--spacing-md); background: var(--gray-100); border-radius: var(--radius-md);">
+                    <strong>ELO Difference:</strong> ${data.elo?.effective_difference || 0} points
+                    <span style="margin-left: var(--spacing-md); color: var(--primary-blue);">(${data.elo?.interpretation || 'Unknown'})</span>
+                </div>
+            `;
+            
+            // Methodology
+            const methodologySection = document.getElementById('methodology-section');
+            methodologySection.innerHTML = `
+                <ul style="list-style: none; padding: 0;">
+                    <li style="padding: var(--spacing-sm) 0;"><strong>⚡ ELO:</strong> ${data.methodology?.elo || 'ELO-based rating system'}</li>
+                    <li style="padding: var(--spacing-sm) 0;"><strong>📊 Form:</strong> ${data.methodology?.form || 'Recent results weighted by recency'}</li>
+                    <li style="padding: var(--spacing-sm) 0;"><strong>📈 Momentum:</strong> ${data.methodology?.momentum || 'Goal difference trends'}</li>
+                    <li style="padding: var(--spacing-sm) 0;"><strong>⚽ Expected Goals:</strong> ${data.methodology?.expected_goals || 'Attack vs defense averages'}</li>
+                    <li style="padding: var(--spacing-sm) 0;"><strong>🤖 Combined:</strong> ${data.methodology?.combined || 'Weighted average of all models'}</li>
+                </ul>
+            `;
+            
+            // Hide loading, show content
+            document.getElementById('loading-section').style.display = 'none';
+            document.getElementById('content-section').style.display = 'block';
+        }
+        
+        // Load on page load
+        document.addEventListener('DOMContentLoaded', loadFixtureDetails);
+    </script>
+</body>
+</html>
+
