@@ -3668,13 +3668,9 @@ def backtest():
                 else:
                     bet_selection = 'Draw'
                 
-                # Get all probabilities for display
-                all_probs = predictions
-                
                 results['detailed_bets'].append({
                     'match': f"{home_team} vs {away_team}",
                     'date': match_date,
-                    'gameweek': match.get('gameweek', 'N/A'),
                     'bet_on': bet_selection,
                     'bet_type': bet['market'].replace('_', ' ').title(),
                     'ai_probability': round(bet['ai_prob'] * 100, 1),
@@ -3683,9 +3679,9 @@ def backtest():
                     'odds_source': odds_source,
                     'ev_percent': round(bet['ev'] * 100, 1),
                     'is_value_bet': bet['ev'] > 0,
-                    'home_prob': round(all_probs.get('home_win', 0) * 100, 1),
-                    'draw_prob': round(all_probs.get('draw', 0) * 100, 1),
-                    'away_prob': round(all_probs.get('away_win', 0) * 100, 1),
+                    'home_prob': round(predictions.get('home_win', 0) * 100, 1) if predictions.get('home_win') else 0,
+                    'draw_prob': round(predictions.get('draw', 0) * 100, 1) if predictions.get('draw') else 0,
+                    'away_prob': round(predictions.get('away_win', 0) * 100, 1) if predictions.get('away_win') else 0,
                     'actual_result': actual_result.replace('_', ' ').title(),
                     'actual_score': f"{home_goals}-{away_goals}",
                     'won': bet_won,
