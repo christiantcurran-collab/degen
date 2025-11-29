@@ -1891,8 +1891,12 @@ class CombinedAIAnalyzer:
         parts = []
         
         # Normalize names for lookup
-        home_norm = normalize_team_name(home_team)
-        away_norm = normalize_team_name(away_team)
+        try:
+            home_norm = normalize_team_name(home_team)
+            away_norm = normalize_team_name(away_team)
+        except:
+            home_norm = home_team
+            away_norm = away_team
         
         # Get ELO ratings
         try:
@@ -1912,38 +1916,39 @@ class CombinedAIAnalyzer:
                 elo_verdict = f"{away_norm} clearly stronger"
             
             parts.append(f"⚡ ELO: {home_norm} {home_elo:.0f} vs {away_norm} {away_elo:.0f} ({elo_verdict})")
-        except:
-            pass
+        except Exception as e:
+            print(f"Error getting ELO for {home_team} vs {away_team}: {e}")
         
         # Get recent form (last 5 games)
         try:
             home_form = self.form_analyzer.get_recent_form(home_team, 5, 'home')
             away_form = self.form_analyzer.get_recent_form(away_team, 5, 'away')
             
-            home_ppg = home_form.get('weighted_ppg', 0)
-            away_ppg = away_form.get('weighted_ppg', 0)
-            
-            if home_ppg > 2.0:
-                home_form_desc = "excellent"
-            elif home_ppg > 1.5:
-                home_form_desc = "good"
-            elif home_ppg > 1.0:
-                home_form_desc = "average"
-            else:
-                home_form_desc = "poor"
+            if home_form and away_form:
+                home_ppg = home_form.get('weighted_ppg', 0) if isinstance(home_form, dict) else 0
+                away_ppg = away_form.get('weighted_ppg', 0) if isinstance(away_form, dict) else 0
                 
-            if away_ppg > 2.0:
-                away_form_desc = "excellent"
-            elif away_ppg > 1.5:
-                away_form_desc = "good"
-            elif away_ppg > 1.0:
-                away_form_desc = "average"
-            else:
-                away_form_desc = "poor"
-            
-            parts.append(f"📊 Form (5 games): {home_norm} {home_form_desc} ({home_ppg:.1f} PPG), {away_norm} {away_form_desc} ({away_ppg:.1f} PPG)")
-        except:
-            pass
+                if home_ppg > 2.0:
+                    home_form_desc = "excellent"
+                elif home_ppg > 1.5:
+                    home_form_desc = "good"
+                elif home_ppg > 1.0:
+                    home_form_desc = "average"
+                else:
+                    home_form_desc = "poor"
+                    
+                if away_ppg > 2.0:
+                    away_form_desc = "excellent"
+                elif away_ppg > 1.5:
+                    away_form_desc = "good"
+                elif away_ppg > 1.0:
+                    away_form_desc = "average"
+                else:
+                    away_form_desc = "poor"
+                
+                parts.append(f"📊 Form (5 games): {home_norm} {home_form_desc} ({home_ppg:.1f} PPG), {away_norm} {away_form_desc} ({away_ppg:.1f} PPG)")
+        except Exception as e:
+            print(f"Error getting form for {home_team} vs {away_team}: {e}")
         
         # Get league position based strength
         try:
@@ -1958,19 +1963,27 @@ class CombinedAIAnalyzer:
                 else: return "Relegation zone"
             
             parts.append(f"💪 Table position: {home_norm} {get_tier(home_strength)} ({home_strength:.0f}), {away_norm} {get_tier(away_strength)} ({away_strength:.0f})")
-        except:
-            pass
+        except Exception as e:
+            print(f"Error getting strength for {home_team} vs {away_team}: {e}")
         
         # Add home advantage note
         parts.append("🏟️ Home advantage: +100 ELO points applied")
         
         # Get model breakdown with probabilities
-        breakdown = self.get_model_breakdown(home_team, away_team, bet_type, market)
-        probs = [f"{k.replace('_', ' ').title()}: {v*100:.0f}%" for k, v in breakdown.items() if v]
-        if probs:
-            parts.append(f"🤖 Model predictions: {', '.join(probs)}")
+        try:
+            breakdown = self.get_model_breakdown(home_team, away_team, bet_type, market)
+            probs = [f"{k.replace('_', ' ').title()}: {v*100:.0f}%" for k, v in breakdown.items() if v and v > 0]
+            if probs:
+                parts.append(f"🤖 Model predictions: {', '.join(probs)}")
+        except Exception as e:
+            print(f"Error getting model breakdown for {home_team} vs {away_team}: {e}")
         
-        return " | ".join(parts) if parts else "Combined AI model analysis"
+        # Always return something useful
+        if parts:
+            return " | ".join(parts)
+        else:
+            # Fallback explanation
+            return f"🤖 Overall AI: Combined analysis for {home_norm} vs {away_norm} using ELO, Form, Sentiment & Anomaly detection"
 
 
 class BettingAnalyzer:
@@ -3061,7 +3074,10 @@ def value_bets():
                         elif ai_model == 'overall':
                             try:
                                 explanation = combined_analyzer.get_explanation(home_team, away_team, 'moneyline', market)
-                            except:
+                                if not explanation or explanation.strip() == "":
+                                    explanation = "🤖 Overall AI: Combined analysis from ELO, Form, Sentiment & Anomaly detection"
+                            except Exception as e:
+                                print(f"Error getting overall explanation for {home_team} vs {away_team}: {e}")
                                 explanation = "🤖 Overall AI: Combined analysis from ELO, Form, Sentiment & Anomaly detection"
                         
                         # Add value explanation - WHY this is a value bet
@@ -3074,6 +3090,10 @@ def value_bets():
                             value_quality = "⭐⭐ Good Value"
                         else:
                             value_quality = "⭐ Marginal Value"
+                        
+                        # Ensure explanation is never empty
+                        if not explanation or explanation.strip() == "":
+                            explanation = f"🤖 Overall AI: Combined analysis from ELO, Form, Sentiment & Anomaly detection"
                         
                         full_explanation = f"{value_quality}: {value_reason} | {explanation}"
                         
