@@ -931,41 +931,58 @@ class FormMomentumAnalyzer:
         Returns form score from 0 (terrible) to 1 (perfect).
         Most recent games weighted more heavily.
         """
-        cache_key = f"{team_name}_{num_games}_{home_away}"
+        # Normalize team name and also get all possible variants
+        normalized_name = normalize_team_name(team_name)
+        
+        # Get all possible names for this team
+        possible_names = [team_name]
+        if normalized_name != team_name:
+            possible_names.append(normalized_name)
+        
+        # Also add reverse lookups (if "Man City" -> find "Manchester City")
+        for full_name, short_name in TEAM_NAME_NORMALIZATION.items():
+            if short_name == normalized_name and full_name not in possible_names:
+                possible_names.append(full_name)
+        
+        cache_key = f"{normalized_name}_{num_games}_{home_away}"
         if cache_key in self._form_cache:
             return self._form_cache[cache_key]
         
-        if home_away == 'home':
-            query = """
-                SELECT * FROM matches 
-                WHERE home_team = ?
-                ORDER BY match_date DESC
-                LIMIT ?
-            """
-        elif home_away == 'away':
-            query = """
-                SELECT * FROM matches 
-                WHERE away_team = ?
-                ORDER BY match_date DESC
-                LIMIT ?
-            """
-        else:
-            query = """
-                SELECT * FROM matches 
-                WHERE (home_team = ? OR away_team = ?)
-                ORDER BY match_date DESC
-                LIMIT ?
-            """
+        # Build dynamic query with all possible team names
+        name_placeholders = ' OR '.join(['home_team = ?' for _ in possible_names])
+        away_placeholders = ' OR '.join(['away_team = ?' for _ in possible_names])
         
-        if home_away == 'both':
-            cursor = self.db.execute(query, (team_name, team_name, num_games))
+        if home_away == 'home':
+            query = f"""
+                SELECT * FROM matches 
+                WHERE ({name_placeholders})
+                ORDER BY match_date DESC
+                LIMIT ?
+            """
+            params = tuple(possible_names) + (num_games,)
+        elif home_away == 'away':
+            query = f"""
+                SELECT * FROM matches 
+                WHERE ({away_placeholders})
+                ORDER BY match_date DESC
+                LIMIT ?
+            """
+            params = tuple(possible_names) + (num_games,)
         else:
-            cursor = self.db.execute(query, (team_name, num_games))
+            query = f"""
+                SELECT * FROM matches 
+                WHERE ({name_placeholders} OR {away_placeholders})
+                ORDER BY match_date DESC
+                LIMIT ?
+            """
+            params = tuple(possible_names) + tuple(possible_names) + (num_games,)
+        
+        cursor = self.db.execute(query, params)
         
         matches = cursor.fetchall()
         
         if not matches:
-            return {'form_score': 0.5, 'points': 0, 'goals_scored': 0, 'goals_conceded': 0, 'matches': 0}
+            return {'form_score': 0.5, 'weighted_ppg': 0, 'points': 0, 'goals_scored': 0, 'goals_conceded': 0, 'matches': 0, 'goals_per_game': 0, 'conceded_per_game': 0}
         
         total_weighted_points = 0
         total_weight = 0
@@ -973,7 +990,9 @@ class FormMomentumAnalyzer:
         total_goals_conceded = 0
         
         for i, match in enumerate(matches):
-            is_home = match['home_team'] == team_name
+            # Check if this team was home - check all possible name variants
+            match_home_norm = normalize_team_name(match['home_team'])
+            is_home = match_home_norm == normalized_name or match['home_team'] in possible_names
             
             if is_home:
                 goals_for = match['home_goals_full_time']
@@ -3447,6 +3466,330 @@ class BacktestAnalyzer:
         }
         
         return probs.get(market)
+
+
+@app.route('/api/fixture-details')
+@require_auth
+def fixture_details():
+    """Get detailed analysis for a specific fixture with comprehensive model breakdown."""
+    try:
+        home_team = request.args.get('home_team')
+        away_team = request.args.get('away_team')
+        
+        if not home_team or not away_team:
+            return jsonify({'error': 'home_team and away_team required'}), 400
+        
+        # Initialize analyzers
+        analyzer = BettingAnalyzer()
+        form_analyzer = FormMomentumAnalyzer()
+        sentiment_analyzer = SentimentExternalAnalyzer()
+        combined_analyzer = CombinedAIAnalyzer()
+        
+        # Normalize team names
+        home_norm = normalize_team_name(home_team)
+        away_norm = normalize_team_name(away_team)
+        
+        # Get team stats
+        home_stats = analyzer.get_team_stats(home_team, 'home', years=2)
+        away_stats = analyzer.get_team_stats(away_team, 'away', years=2)
+        
+        # Get ELO ratings with explanation
+        home_elo = form_analyzer.calculate_elo_rating(home_team)
+        away_elo = form_analyzer.calculate_elo_rating(away_team)
+        home_base_elo = get_base_elo(home_team)
+        away_base_elo = get_base_elo(away_team)
+        elo_diff = home_elo - away_elo
+        
+        elo_analysis = {
+            'home': {
+                'current': round(home_elo, 0),
+                'base': round(home_base_elo, 0),
+                'change': round(home_elo - home_base_elo, 0),
+                'explanation': f"Started at {home_base_elo:.0f}, adjusted by {home_elo - home_base_elo:+.0f} based on recent results"
+            },
+            'away': {
+                'current': round(away_elo, 0),
+                'base': round(away_base_elo, 0),
+                'change': round(away_elo - away_base_elo, 0),
+                'explanation': f"Started at {away_base_elo:.0f}, adjusted by {away_elo - away_base_elo:+.0f} based on recent results"
+            },
+            'difference': round(elo_diff, 0),
+            'home_advantage_bonus': 100,
+            'effective_difference': round(elo_diff + 100, 0),
+            'interpretation': (
+                f"{home_norm} clearly stronger" if elo_diff > 150 else
+                f"{home_norm} favored" if elo_diff > 50 else
+                "Evenly matched" if elo_diff > -50 else
+                f"{away_norm} favored" if elo_diff > -150 else
+                f"{away_norm} clearly stronger"
+            )
+        }
+        
+        # Get form analysis with detailed breakdown
+        home_form = form_analyzer.get_recent_form(home_team, 5, 'home')
+        away_form = form_analyzer.get_recent_form(away_team, 5, 'away')
+        home_form_all = form_analyzer.get_recent_form(home_team, 10, 'both')
+        away_form_all = form_analyzer.get_recent_form(away_team, 10, 'both')
+        
+        def get_form_rating(ppg):
+            if ppg > 2.3: return "Excellent"
+            elif ppg > 1.8: return "Good"
+            elif ppg > 1.3: return "Average"
+            elif ppg > 0.8: return "Poor"
+            else: return "Very Poor"
+        
+        form_analysis = {
+            'home': {
+                'last_5_home': home_form,
+                'last_10_all': home_form_all,
+                'rating': get_form_rating(home_form.get('weighted_ppg', 0)),
+                'summary': f"{home_form.get('weighted_ppg', 0):.1f} PPG from last {home_form.get('matches', 0)} home games"
+            },
+            'away': {
+                'last_5_away': away_form,
+                'last_10_all': away_form_all,
+                'rating': get_form_rating(away_form.get('weighted_ppg', 0)),
+                'summary': f"{away_form.get('weighted_ppg', 0):.1f} PPG from last {away_form.get('matches', 0)} away games"
+            }
+        }
+        
+        # Get momentum
+        home_mom = form_analyzer.get_momentum_score(home_team, 'home')
+        away_mom = form_analyzer.get_momentum_score(away_team, 'away')
+        
+        momentum_analysis = {
+            'home': {
+                'score': home_mom.get('score', 0),
+                'trend': home_mom.get('trend', 'neutral'),
+                'interpretation': (
+                    "Strong upward trend" if home_mom.get('trend') == 'strong_positive' else
+                    "Improving" if home_mom.get('trend') == 'positive' else
+                    "Declining" if home_mom.get('trend') == 'negative' else
+                    "Strong downward trend" if home_mom.get('trend') == 'strong_negative' else
+                    "Stable"
+                )
+            },
+            'away': {
+                'score': away_mom.get('score', 0),
+                'trend': away_mom.get('trend', 'neutral'),
+                'interpretation': (
+                    "Strong upward trend" if away_mom.get('trend') == 'strong_positive' else
+                    "Improving" if away_mom.get('trend') == 'positive' else
+                    "Declining" if away_mom.get('trend') == 'negative' else
+                    "Strong downward trend" if away_mom.get('trend') == 'strong_negative' else
+                    "Stable"
+                )
+            }
+        }
+        
+        # Get team strength indices
+        home_strength = sentiment_analyzer.get_team_strength_index(home_team)
+        away_strength = sentiment_analyzer.get_team_strength_index(away_team)
+        
+        def get_tier(s):
+            if s >= 85: return "Elite (Top 4)"
+            elif s >= 70: return "Strong (Top 8)"
+            elif s >= 55: return "Mid-table"
+            elif s >= 45: return "Lower half"
+            else: return "Relegation zone"
+        
+        strength_analysis = {
+            'home': {
+                'index': round(home_strength, 0),
+                'tier': get_tier(home_strength)
+            },
+            'away': {
+                'index': round(away_strength, 0),
+                'tier': get_tier(away_strength)
+            },
+            'difference': round(home_strength - away_strength, 0)
+        }
+        
+        # Get head-to-head
+        h2h = form_analyzer.get_head_to_head(home_team, away_team, 10)
+        h2h_analysis = {
+            'total_matches': 0,
+            'home_wins': 0,
+            'away_wins': 0,
+            'draws': 0,
+            'home_goals': 0,
+            'away_goals': 0,
+            'recent_matches': []
+        }
+        
+        if h2h:
+            h2h_analysis.update({
+                'total_matches': h2h.get('matches', 0),
+                'home_wins': h2h.get('home_wins', 0),
+                'away_wins': h2h.get('away_wins', 0),
+                'draws': h2h.get('draws', 0),
+                'home_win_rate': round(h2h.get('home_win_rate', 0) * 100, 1),
+                'away_win_rate': round(h2h.get('away_win_rate', 0) * 100, 1),
+                'draw_rate': round(h2h.get('draw_rate', 0) * 100, 1),
+                'home_goals_avg': round(h2h.get('home_goals_avg', 0), 2),
+                'away_goals_avg': round(h2h.get('away_goals_avg', 0), 2)
+            })
+        
+        # Get model breakdown for all markets with detailed explanations
+        markets = ['home_win', 'draw', 'away_win']
+        model_breakdown = {}
+        
+        for market in markets:
+            breakdown = {}
+            
+            # Complex model
+            try:
+                complex_prob = analyzer.calculate_ai_probability(home_team, away_team, 'moneyline', market, 'complex')
+                breakdown['complex'] = {
+                    'probability': round(complex_prob * 100, 1) if complex_prob else None,
+                    'name': 'Multi-Factor Model',
+                    'description': 'Uses home advantage (+15%), weighted form (70% current/30% historical), and team strength metrics'
+                }
+            except:
+                breakdown['complex'] = {'probability': None, 'name': 'Multi-Factor Model', 'description': 'Error calculating'}
+            
+            # Form & Momentum
+            try:
+                form_prob = form_analyzer.calculate_probability(home_team, away_team, 'moneyline', market)
+                breakdown['form_momentum'] = {
+                    'probability': round(form_prob * 100, 1) if form_prob else None,
+                    'name': 'Form & Momentum',
+                    'description': f"ELO: {home_norm} {home_elo:.0f} vs {away_norm} {away_elo:.0f} | Form: {home_form.get('weighted_ppg', 0):.1f} vs {away_form.get('weighted_ppg', 0):.1f} PPG"
+                }
+            except:
+                breakdown['form_momentum'] = {'probability': None, 'name': 'Form & Momentum', 'description': 'Error calculating'}
+            
+            # Sentiment
+            try:
+                sentiment_prob = sentiment_analyzer.calculate_probability(home_team, away_team, 'moneyline', market)
+                breakdown['sentiment'] = {
+                    'probability': round(sentiment_prob * 100, 1) if sentiment_prob else None,
+                    'name': 'Sentiment & FPL',
+                    'description': f"Strength Index: {home_norm} {home_strength:.0f} vs {away_norm} {away_strength:.0f}"
+                }
+            except:
+                breakdown['sentiment'] = {'probability': None, 'name': 'Sentiment & FPL', 'description': 'Error calculating'}
+            
+            # Overall Combined
+            try:
+                overall_prob = combined_analyzer.calculate_probability(home_team, away_team, 'moneyline', market)
+                breakdown['overall'] = {
+                    'probability': round(overall_prob * 100, 1) if overall_prob else None,
+                    'name': 'Combined AI',
+                    'description': 'Weighted average: Complex 25%, Form 30%, Sentiment 25%, Anomaly 20%'
+                }
+            except:
+                breakdown['overall'] = {'probability': None, 'name': 'Combined AI', 'description': 'Error calculating'}
+            
+            model_breakdown[market] = breakdown
+        
+        # Get recent match results for both teams
+        db = get_db()
+        recent_matches = {'home': [], 'away': []}
+        
+        try:
+            for team, key in [(home_team, 'home'), (away_team, 'away')]:
+                norm_team = normalize_team_name(team)
+                possible_names = [team, norm_team]
+                for full_name, short_name in TEAM_NAME_NORMALIZATION.items():
+                    if short_name == norm_team and full_name not in possible_names:
+                        possible_names.append(full_name)
+                
+                placeholders = ' OR '.join(['home_team = ? OR away_team = ?' for _ in possible_names])
+                query = f"""
+                    SELECT * FROM matches 
+                    WHERE ({placeholders})
+                    AND match_date < date('now')
+                    ORDER BY match_date DESC
+                    LIMIT 5
+                """
+                params = []
+                for name in possible_names:
+                    params.extend([name, name])
+                
+                cursor = db.execute(query, tuple(params))
+                for match in cursor.fetchall():
+                    match_home_norm = normalize_team_name(match['home_team'])
+                    is_home = match_home_norm == norm_team or match['home_team'] in possible_names
+                    opponent = match['away_team'] if is_home else match['home_team']
+                    team_goals = match['home_goals_full_time'] if is_home else match['away_goals_full_time']
+                    opp_goals = match['away_goals_full_time'] if is_home else match['home_goals_full_time']
+                    result = 'W' if team_goals > opp_goals else 'D' if team_goals == opp_goals else 'L'
+                    recent_matches[key].append({
+                        'date': match['match_date'],
+                        'opponent': opponent,
+                        'score': f"{team_goals}-{opp_goals}",
+                        'result': result,
+                        'venue': 'H' if is_home else 'A'
+                    })
+        except Exception as e:
+            print(f"Error fetching recent matches: {e}")
+        
+        # Generate key insights
+        insights = []
+        
+        # ELO insight
+        if elo_diff > 150:
+            insights.append(f"⚡ {home_norm} has a significant ELO advantage (+{elo_diff:.0f} points)")
+        elif elo_diff > 50:
+            insights.append(f"⚡ {home_norm} is favored by ELO (+{elo_diff:.0f} points)")
+        elif elo_diff < -150:
+            insights.append(f"⚡ {away_norm} has a significant ELO advantage (+{abs(elo_diff):.0f} points)")
+        elif elo_diff < -50:
+            insights.append(f"⚡ {away_norm} is favored by ELO (+{abs(elo_diff):.0f} points)")
+        else:
+            insights.append("⚡ Teams are evenly matched by ELO rating")
+        
+        # Form insight
+        home_ppg = home_form.get('weighted_ppg', 0)
+        away_ppg = away_form.get('weighted_ppg', 0)
+        if home_ppg > away_ppg + 0.5:
+            insights.append(f"📊 {home_norm} in better form ({home_ppg:.1f} vs {away_ppg:.1f} PPG)")
+        elif away_ppg > home_ppg + 0.5:
+            insights.append(f"📊 {away_norm} in better form ({away_ppg:.1f} vs {home_ppg:.1f} PPG)")
+        
+        # Momentum insight
+        if home_mom.get('trend') in ['strong_positive', 'positive'] and away_mom.get('trend') in ['negative', 'strong_negative']:
+            insights.append(f"📈 {home_norm} momentum rising, {away_norm} falling")
+        elif away_mom.get('trend') in ['strong_positive', 'positive'] and home_mom.get('trend') in ['negative', 'strong_negative']:
+            insights.append(f"📈 {away_norm} momentum rising, {home_norm} falling")
+        
+        # Home advantage
+        insights.append("🏟️ Home advantage: +100 ELO points applied to home team")
+        
+        # Strength tier insight
+        if home_strength - away_strength > 20:
+            insights.append(f"💪 {home_norm} ({get_tier(home_strength)}) ranks higher than {away_norm} ({get_tier(away_strength)})")
+        elif away_strength - home_strength > 20:
+            insights.append(f"💪 {away_norm} ({get_tier(away_strength)}) ranks higher than {home_norm} ({get_tier(home_strength)})")
+        
+        return jsonify({
+            'home_team': home_team,
+            'away_team': away_team,
+            'home_team_normalized': home_norm,
+            'away_team_normalized': away_norm,
+            'elo': elo_analysis,
+            'form': form_analysis,
+            'momentum': momentum_analysis,
+            'strength': strength_analysis,
+            'head_to_head': h2h_analysis,
+            'model_breakdown': model_breakdown,
+            'recent_matches': recent_matches,
+            'insights': insights,
+            'methodology': {
+                'elo': 'ELO ratings start from base values and adjust based on match results. Home team gets +100 bonus.',
+                'form': 'Last 5 games weighted exponentially (recent games count more). PPG = Points Per Game.',
+                'momentum': 'Compares goal difference in recent games vs older games to detect trends.',
+                'strength': 'Based on current league position and FPL/external data.',
+                'combined': 'Weighted average: Complex 25%, Form 30%, Sentiment 25%, Anomaly 20%'
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error in fixture_details endpoint: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': 'Internal server error'}), 500
 
 
 @app.route('/api/backtest')

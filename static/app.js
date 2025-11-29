@@ -1517,7 +1517,7 @@ function renderValueBets(bets) {
             <div class="value-bet-card ${isAnomaly ? 'anomaly-bet' : ''}">
                 ${isAnomaly ? '<div class="anomaly-badge">🔥 ANOMALY</div>' : ''}
                 <div class="bet-match-info">
-                    <h3>${bet.match}</h3>
+                    <h3 class="clickable-match" onclick="showFixtureDetails('${bet.home_team}', '${bet.away_team}')" title="Click for detailed analysis">${bet.match} 🔍</h3>
                     <div class="bet-market">${bet.bet_type} | ${bet.market}</div>
                     <div class="bet-time">${matchTimeStr}</div>
                     ${bet.explanation ? `<div class="bet-explanation"><em>${bet.explanation}</em></div>` : ''}
@@ -1553,6 +1553,269 @@ function renderValueBets(bets) {
     });
     
     containerEl.innerHTML = html;
+}
+
+// Show fixture details modal
+async function showFixtureDetails(homeTeam, awayTeam) {
+    // Create modal if it doesn't exist
+    let modal = document.getElementById('fixture-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'fixture-modal';
+        modal.className = 'fixture-modal';
+        modal.innerHTML = `
+            <div class="fixture-modal-content">
+                <span class="fixture-modal-close" onclick="closeFixtureModal()">&times;</span>
+                <div id="fixture-modal-body">Loading...</div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+    }
+    
+    modal.style.display = 'block';
+    const modalBody = document.getElementById('fixture-modal-body');
+    modalBody.innerHTML = '<div class="loading">Loading detailed analysis...</div>';
+    
+    try {
+        const response = await fetch(`/api/fixture-details?home_team=${encodeURIComponent(homeTeam)}&away_team=${encodeURIComponent(awayTeam)}`);
+        const data = await response.json();
+        
+        if (data.error) {
+            modalBody.innerHTML = `<div class="error-message">${data.error}</div>`;
+            return;
+        }
+        
+        modalBody.innerHTML = renderFixtureDetailsHTML(data);
+    } catch (error) {
+        console.error('Error loading fixture details:', error);
+        modalBody.innerHTML = `<div class="error-message">Failed to load fixture details. Please try again.</div>`;
+    }
+}
+
+function closeFixtureModal() {
+    const modal = document.getElementById('fixture-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// Close modal when clicking outside
+window.onclick = function(event) {
+    const modal = document.getElementById('fixture-modal');
+    if (event.target === modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function renderFixtureDetailsHTML(data) {
+    const home = data.home_team_normalized || data.home_team;
+    const away = data.away_team_normalized || data.away_team;
+    
+    // Model breakdown table
+    let modelTable = `
+        <table class="model-breakdown-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>${home} Win</th>
+                    <th>Draw</th>
+                    <th>${away} Win</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+    `;
+    
+    const models = ['complex', 'form_momentum', 'sentiment', 'overall'];
+    const modelNames = {
+        'complex': '🧠 Multi-Factor',
+        'form_momentum': '📈 Form & Momentum',
+        'sentiment': '💭 Sentiment & FPL',
+        'overall': '🤖 Combined AI'
+    };
+    
+    models.forEach(model => {
+        const homeWin = data.model_breakdown?.home_win?.[model]?.probability || '-';
+        const draw = data.model_breakdown?.draw?.[model]?.probability || '-';
+        const awayWin = data.model_breakdown?.away_win?.[model]?.probability || '-';
+        const desc = data.model_breakdown?.home_win?.[model]?.description || '';
+        
+        modelTable += `
+            <tr>
+                <td><strong>${modelNames[model] || model}</strong></td>
+                <td class="${homeWin > 50 ? 'highlight-prob' : ''}">${homeWin}%</td>
+                <td>${draw}%</td>
+                <td class="${awayWin > 50 ? 'highlight-prob' : ''}">${awayWin}%</td>
+                <td class="model-desc">${desc}</td>
+            </tr>
+        `;
+    });
+    modelTable += '</tbody></table>';
+    
+    // Recent form for each team
+    const renderRecentMatches = (matches, team) => {
+        if (!matches || matches.length === 0) return '<p>No recent matches found</p>';
+        return `
+            <div class="recent-matches-list">
+                ${matches.map(m => `
+                    <div class="recent-match ${m.result === 'W' ? 'result-win' : m.result === 'D' ? 'result-draw' : 'result-loss'}">
+                        <span class="result-badge-small">${m.result}</span>
+                        <span class="match-venue">(${m.venue})</span>
+                        <span class="match-opponent">vs ${m.opponent}</span>
+                        <span class="match-score">${m.score}</span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    };
+    
+    return `
+        <div class="fixture-details">
+            <h2>📊 ${home} vs ${away}</h2>
+            
+            <div class="insights-section">
+                <h3>🔑 Key Insights</h3>
+                <ul class="insights-list">
+                    ${data.insights?.map(i => `<li>${i}</li>`).join('') || '<li>No insights available</li>'}
+                </ul>
+            </div>
+            
+            <div class="section-grid">
+                <div class="detail-section">
+                    <h3>⚡ ELO Ratings</h3>
+                    <div class="elo-comparison">
+                        <div class="elo-team">
+                            <div class="team-name">${home}</div>
+                            <div class="elo-value">${data.elo?.home?.current || 'N/A'}</div>
+                            <div class="elo-change ${(data.elo?.home?.change || 0) >= 0 ? 'positive' : 'negative'}">
+                                ${(data.elo?.home?.change || 0) >= 0 ? '+' : ''}${data.elo?.home?.change || 0}
+                            </div>
+                            <div class="elo-base">Base: ${data.elo?.home?.base || 'N/A'}</div>
+                        </div>
+                        <div class="elo-vs">
+                            <div class="elo-diff">${data.elo?.interpretation || 'Unknown'}</div>
+                            <div class="elo-diff-value">Diff: ${data.elo?.effective_difference || 0}</div>
+                            <div class="home-bonus">+100 home bonus included</div>
+                        </div>
+                        <div class="elo-team">
+                            <div class="team-name">${away}</div>
+                            <div class="elo-value">${data.elo?.away?.current || 'N/A'}</div>
+                            <div class="elo-change ${(data.elo?.away?.change || 0) >= 0 ? 'positive' : 'negative'}">
+                                ${(data.elo?.away?.change || 0) >= 0 ? '+' : ''}${data.elo?.away?.change || 0}
+                            </div>
+                            <div class="elo-base">Base: ${data.elo?.away?.base || 'N/A'}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="detail-section">
+                    <h3>📊 Current Form</h3>
+                    <div class="form-comparison">
+                        <div class="form-team">
+                            <div class="team-name">${home}</div>
+                            <div class="form-rating">${data.form?.home?.rating || 'Unknown'}</div>
+                            <div class="form-ppg">${data.form?.home?.last_5_home?.weighted_ppg?.toFixed(1) || 0} PPG</div>
+                            <div class="form-matches">${data.form?.home?.last_5_home?.matches || 0} home games</div>
+                        </div>
+                        <div class="form-team">
+                            <div class="team-name">${away}</div>
+                            <div class="form-rating">${data.form?.away?.rating || 'Unknown'}</div>
+                            <div class="form-ppg">${data.form?.away?.last_5_away?.weighted_ppg?.toFixed(1) || 0} PPG</div>
+                            <div class="form-matches">${data.form?.away?.last_5_away?.matches || 0} away games</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="section-grid">
+                <div class="detail-section">
+                    <h3>📈 Momentum</h3>
+                    <div class="momentum-comparison">
+                        <div class="momentum-team">
+                            <div class="team-name">${home}</div>
+                            <div class="momentum-trend ${data.momentum?.home?.trend?.includes('positive') ? 'trend-up' : data.momentum?.home?.trend?.includes('negative') ? 'trend-down' : ''}">${data.momentum?.home?.interpretation || 'Stable'}</div>
+                            <div class="momentum-score">Score: ${data.momentum?.home?.score || 0}</div>
+                        </div>
+                        <div class="momentum-team">
+                            <div class="team-name">${away}</div>
+                            <div class="momentum-trend ${data.momentum?.away?.trend?.includes('positive') ? 'trend-up' : data.momentum?.away?.trend?.includes('negative') ? 'trend-down' : ''}">${data.momentum?.away?.interpretation || 'Stable'}</div>
+                            <div class="momentum-score">Score: ${data.momentum?.away?.score || 0}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="detail-section">
+                    <h3>💪 League Strength</h3>
+                    <div class="strength-comparison">
+                        <div class="strength-team">
+                            <div class="team-name">${home}</div>
+                            <div class="strength-index">${data.strength?.home?.index || 50}</div>
+                            <div class="strength-tier">${data.strength?.home?.tier || 'Unknown'}</div>
+                        </div>
+                        <div class="strength-team">
+                            <div class="team-name">${away}</div>
+                            <div class="strength-index">${data.strength?.away?.index || 50}</div>
+                            <div class="strength-tier">${data.strength?.away?.tier || 'Unknown'}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="detail-section full-width">
+                <h3>🤖 Model Breakdown</h3>
+                ${modelTable}
+            </div>
+            
+            <div class="section-grid">
+                <div class="detail-section">
+                    <h3>📅 ${home} Recent Matches</h3>
+                    ${renderRecentMatches(data.recent_matches?.home, home)}
+                </div>
+                <div class="detail-section">
+                    <h3>📅 ${away} Recent Matches</h3>
+                    ${renderRecentMatches(data.recent_matches?.away, away)}
+                </div>
+            </div>
+            
+            ${data.head_to_head?.total_matches > 0 ? `
+            <div class="detail-section full-width">
+                <h3>⚔️ Head to Head (Last ${data.head_to_head.total_matches} meetings)</h3>
+                <div class="h2h-stats">
+                    <div class="h2h-stat">
+                        <div class="h2h-label">${home} Wins</div>
+                        <div class="h2h-value">${data.head_to_head.home_wins}</div>
+                    </div>
+                    <div class="h2h-stat">
+                        <div class="h2h-label">Draws</div>
+                        <div class="h2h-value">${data.head_to_head.draws}</div>
+                    </div>
+                    <div class="h2h-stat">
+                        <div class="h2h-label">${away} Wins</div>
+                        <div class="h2h-value">${data.head_to_head.away_wins}</div>
+                    </div>
+                    <div class="h2h-stat">
+                        <div class="h2h-label">Avg Goals (${home})</div>
+                        <div class="h2h-value">${data.head_to_head.home_goals_avg}</div>
+                    </div>
+                    <div class="h2h-stat">
+                        <div class="h2h-label">Avg Goals (${away})</div>
+                        <div class="h2h-value">${data.head_to_head.away_goals_avg}</div>
+                    </div>
+                </div>
+            </div>
+            ` : ''}
+            
+            <div class="methodology-section">
+                <h4>📖 Methodology</h4>
+                <ul>
+                    <li><strong>ELO:</strong> ${data.methodology?.elo || 'ELO-based rating system'}</li>
+                    <li><strong>Form:</strong> ${data.methodology?.form || 'Recent results weighted by recency'}</li>
+                    <li><strong>Momentum:</strong> ${data.methodology?.momentum || 'Goal difference trends'}</li>
+                    <li><strong>Combined:</strong> ${data.methodology?.combined || 'Weighted average of all models'}</li>
+                </ul>
+            </div>
+        </div>
+    `;
 }
 
 // =============================================================================
