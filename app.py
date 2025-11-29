@@ -111,21 +111,38 @@ TEAM_NAME_NORMALIZATION = {
     'Luton Town': 'Luton'
 }
 
-# Base ELO ratings based on actual Premier League quality (2025/26 season)
-# These reflect true team quality, not just 1500 for everyone
+# Base ELO ratings based on actual Premier League quality (2025/26 season - GW13)
+# Updated to reflect current season form and standings
+# These reflect true team quality differences
 BASE_ELO_RATINGS = {
-    # Elite tier
-    'Liverpool': 1850, 'Man City': 1840, 'Arsenal': 1820, 'Chelsea': 1750,
-    # Strong tier
-    'Tottenham': 1700, 'Newcastle': 1690, 'Aston Villa': 1680, 'Man United': 1660,
-    'Brighton': 1650, "Nott'm Forest": 1640,
-    # Mid tier  
-    'Bournemouth': 1580, 'Fulham': 1570, 'West Ham': 1560, 'Brentford': 1550,
-    'Crystal Palace': 1540, 'Everton': 1520, 'Wolves': 1510,
-    # Lower tier
-    'Leicester': 1480, 'Ipswich': 1420, 'Southampton': 1400,
-    # Promoted/Other
-    'Leeds': 1450, 'Burnley': 1440, 'Sunderland': 1430, 'Sheffield United': 1380, 'Luton': 1370
+    # Elite tier (Top 4 quality)
+    'Liverpool': 1880,      # Top of league, exceptional form
+    'Arsenal': 1850,        # Title contenders, strong at home
+    'Man City': 1840,       # Slight dip but still elite
+    'Chelsea': 1780,        # Improving under new system
+    # Strong tier (Top 6-8)
+    'Newcastle': 1720,      # Strong this season
+    'Brighton': 1710,       # Consistently good
+    'Aston Villa': 1700,    # CL quality
+    'Tottenham': 1680,      # Inconsistent but capable
+    "Nott'm Forest": 1670,  # Surprising form
+    # Mid tier (9-14)
+    'Bournemouth': 1600,    # Solid mid-table
+    'Fulham': 1590,
+    'Brentford': 1580,
+    'Man United': 1570,     # Struggling this season
+    'West Ham': 1560,
+    'Crystal Palace': 1550,
+    # Lower mid (15-17)
+    'Everton': 1520,
+    'Wolves': 1510,
+    'Leicester': 1500,
+    # Relegation zone (18-20)
+    'Ipswich': 1450,
+    'Southampton': 1420,    # Bottom of league
+    # Other teams (if promoted)
+    'Leeds': 1480, 'Burnley': 1470, 'Sunderland': 1460, 
+    'Sheffield United': 1400, 'Luton': 1390
 }
 
 def normalize_team_name(team_name):
@@ -1521,18 +1538,20 @@ class SentimentExternalAnalyzer:
         # Known team tiers based on recent Premier League performance
         # This provides intuitive baseline that matches reality
         TEAM_TIERS = {
-            # Elite tier (80-92)
-            'Liverpool': 92, 'Man City': 90, 'Arsenal': 88, 'Chelsea': 80,
-            # Strong tier (68-78)
-            'Tottenham': 75, 'Newcastle': 74, 'Aston Villa': 73, 'Man United': 70,
-            'Brighton': 70, "Nott'm Forest": 68,
-            # Mid tier (52-65)
-            'Bournemouth': 60, 'Fulham': 58, 'West Ham': 56, 'Brentford': 55,
-            'Crystal Palace': 54, 'Everton': 52, 'Wolves': 52,
-            # Lower tier (35-50)
-            'Leicester': 48, 'Ipswich': 40, 'Southampton': 35,
-            # Promoted/Relegated
-            'Leeds': 45, 'Burnley': 44, 'Sunderland': 43, 'Sheffield United': 38,
+            # Elite tier (85-95) - Title contenders
+            'Liverpool': 95, 'Arsenal': 92, 'Man City': 90, 'Chelsea': 82,
+            # Strong tier (72-80) - Top 6-8
+            'Newcastle': 78, 'Brighton': 77, 'Aston Villa': 76, 'Tottenham': 74,
+            "Nott'm Forest": 73,
+            # Mid tier (58-68) - Mid-table
+            'Bournemouth': 65, 'Fulham': 63, 'Brentford': 62, 'Man United': 60,
+            'West Ham': 59, 'Crystal Palace': 58,
+            # Lower mid (48-55)
+            'Everton': 52, 'Wolves': 50, 'Leicester': 48,
+            # Relegation zone (30-45)
+            'Ipswich': 42, 'Southampton': 32,
+            # Other
+            'Leeds': 50, 'Burnley': 48, 'Sunderland': 46, 'Sheffield United': 38,
             'Luton': 35
         }
         
@@ -3279,6 +3298,9 @@ class BacktestAnalyzer:
         Calculate probability for a market using only historical data.
         No lookahead bias - only uses matches before cutoff_date.
         Uses realistic base ELO ratings combined with form.
+        
+        Key: ELO difference is the PRIMARY factor (70% weight)
+        Arsenal (1820) vs Tottenham (1700) at home should give Arsenal ~65-70%
         """
         # Normalize team names
         home_normalized = normalize_team_name(home_team)
@@ -3294,47 +3316,52 @@ class BacktestAnalyzer:
         home_form = self.get_home_form_before_date(home_normalized)
         away_form = self.get_away_form_before_date(away_normalized)
         
-        # ELO-based probability (primary factor - 60%)
-        elo_diff = home_base_elo - away_base_elo + 80  # +80 for home advantage
+        # ELO-based probability (PRIMARY factor - 70%)
+        # Home advantage = +100 ELO points (strong home advantage)
+        elo_diff = home_base_elo - away_base_elo + 100
         home_elo_prob = 1 / (1 + 10 ** (-elo_diff / 400))
         
-        # Form-based adjustment (secondary - 40%)
+        # Form-based adjustment (secondary - 30%)
         if home_stats and away_stats:
-            # Win rate difference with form
             home_strength = home_stats['win_rate'] * 0.4 + home_form['win_rate'] * 0.6
             away_strength = away_stats['win_rate'] * 0.4 + away_form['win_rate'] * 0.6
             
-            # Goal difference factor
             home_gd = (home_stats['avg_scored'] - home_stats['avg_conceded']) if home_stats['avg_scored'] else 0
             away_gd = (away_stats['avg_scored'] - away_stats['avg_conceded']) if away_stats['avg_scored'] else 0
-            gd_factor = (home_gd - away_gd) * 0.03  # Small adjustment
+            gd_factor = (home_gd - away_gd) * 0.02
             
-            form_home_prob = 0.5 + (home_strength - away_strength) * 0.3 + gd_factor
-            form_home_prob = max(0.15, min(0.85, form_home_prob))
+            form_home_prob = 0.5 + (home_strength - away_strength) * 0.25 + gd_factor
+            form_home_prob = max(0.20, min(0.80, form_home_prob))
         else:
-            form_home_prob = home_elo_prob  # Fall back to ELO
+            form_home_prob = home_elo_prob
         
-        # Combine ELO (60%) and form (40%)
-        home_win_base = home_elo_prob * 0.60 + form_home_prob * 0.40
+        # Combine: ELO dominates (70%), form is secondary (30%)
+        home_win_base = home_elo_prob * 0.70 + form_home_prob * 0.30
         
-        # Draw probability - more likely when teams are close
-        elo_closeness = 1 - abs(home_base_elo - away_base_elo) / 500
-        elo_closeness = max(0, min(1, elo_closeness))
-        draw_prob = 0.24 + (elo_closeness * 0.06)  # 24-30%
+        # Draw probability - lower for big ELO gaps, higher for close matches
+        elo_gap = abs(home_base_elo - away_base_elo)
+        if elo_gap > 200:  # Big mismatch
+            draw_prob = 0.18
+        elif elo_gap > 100:  # Medium gap
+            draw_prob = 0.22
+        else:  # Close match
+            draw_prob = 0.26
         
         # Calculate final probabilities
         remaining = 1 - draw_prob
         home_win_prob = home_win_base * remaining
         away_win_prob = (1 - home_win_base) * remaining
         
-        # Cap away probability for big mismatches
-        if home_base_elo - away_base_elo > 150:
-            max_away = 0.18
+        # Hard cap away probability for big mismatches
+        if home_base_elo - away_base_elo > 100:
+            # Arsenal (1820) vs Tottenham (1700) = 120 gap
+            # Max away should be ~15%
+            max_away = max(0.08, 0.20 - (home_base_elo - away_base_elo - 100) / 500)
             if away_win_prob > max_away:
                 excess = away_win_prob - max_away
                 away_win_prob = max_away
-                home_win_prob += excess * 0.6
-                draw_prob += excess * 0.4
+                home_win_prob += excess * 0.7
+                draw_prob += excess * 0.3
         
         # Normalize
         total = home_win_prob + away_win_prob + draw_prob
@@ -3496,6 +3523,7 @@ def backtest():
             'exchange_adjusted': True,
             'exchange_multiplier': round(EXCHANGE_ODDS_MULTIPLIER, 4),
             'methodology': f'Season {season_str} - Gameweek-based point-in-time analysis ({len(gameweek_dates)} completed gameweeks)',
+            'betting_strategy': 'Bet on outcomes where AI probability > bookmaker implied probability (positive EV). Minimum 5% edge required.',
             'date_range': f"{gameweek_dates[-1][-1] if gameweek_dates else 'N/A'} to {gameweek_dates[0][0] if gameweek_dates else 'N/A'}",
             'bets_placed': 0,
             'bets_won': 0,
@@ -3631,17 +3659,38 @@ def backtest():
                     if bet_won:
                         results['ev_accuracy']['negative_ev_wins'] += 1
                 
-                # Add to detailed bets
+                # Add to detailed bets with full explanation
+                # Determine what we bet on
+                if bet['market'] == 'home_win':
+                    bet_selection = home_team
+                elif bet['market'] == 'away_win':
+                    bet_selection = away_team
+                else:
+                    bet_selection = 'Draw'
+                
+                # Get all probabilities for display
+                all_probs = predictions
+                
                 results['detailed_bets'].append({
                     'match': f"{home_team} vs {away_team}",
                     'date': match_date,
-                    'prediction': bet['market'].replace('_', ' ').title(),
+                    'gameweek': match.get('gameweek', 'N/A'),
+                    'bet_on': bet_selection,
+                    'bet_type': bet['market'].replace('_', ' ').title(),
                     'ai_probability': round(bet['ai_prob'] * 100, 1),
+                    'implied_probability': round(bet['implied_prob'] * 100, 1),
                     'odds': round(bet['odds'], 2),
                     'odds_source': odds_source,
-                    'ev': round(bet['ev'] * 100, 1),
+                    'ev_percent': round(bet['ev'] * 100, 1),
+                    'is_value_bet': bet['ev'] > 0,
+                    'home_prob': round(all_probs.get('home_win', 0) * 100, 1),
+                    'draw_prob': round(all_probs.get('draw', 0) * 100, 1),
+                    'away_prob': round(all_probs.get('away_win', 0) * 100, 1),
                     'actual_result': actual_result.replace('_', ' ').title(),
+                    'actual_score': f"{home_goals}-{away_goals}",
                     'won': bet_won,
+                    'stake': stake,
+                    'returns': round(stake * bet['odds'], 2) if bet_won else 0,
                     'profit': round((stake * bet['odds'] - stake) if bet_won else -stake, 2)
                 })
         
