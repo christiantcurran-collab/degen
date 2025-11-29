@@ -2141,7 +2141,7 @@ def login():
         password = request.form.get('password')
         if password == APP_PASSWORD:
             session['authenticated'] = True
-            return redirect(url_for('index'))
+            return redirect(url_for('index_page'))
         else:
             return render_template('login.html', error='Incorrect password')
     return render_template('login.html')
@@ -2153,8 +2153,15 @@ def logout():
     return redirect(url_for('login'))
 
 @app.route('/')
+def root():
+    """Root route - redirect to login"""
+    if session.get('authenticated'):
+        return redirect(url_for('index_page'))
+    return redirect(url_for('login'))
+
+@app.route('/index')
 @require_auth
-def index():
+def index_page():
     """Main page"""
     return render_template('index.html')
 
