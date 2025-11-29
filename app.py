@@ -3370,24 +3370,55 @@ def backtest():
         
         db = get_db()
         
-        # Get all match dates to identify gameweeks
+        # Get current date for filtering
+        from datetime import datetime, date
+        today = date.today().isoformat()
+        
+        # Get season filter - default to current season (2024/25)
+        # Premier League season runs Aug-May
+        current_month = datetime.now().month
+        current_year = datetime.now().year
+        if current_month >= 8:  # Aug onwards = new season
+            season_start_year = current_year
+        else:  # Jan-July = previous year's season
+            season_start_year = current_year - 1
+        
+        # Current season date range
+        season_start = f"{season_start_year}-08-01"
+        
+        # Get all match dates from CURRENT SEASON that are COMPLETED (before today)
         # A "gameweek" is matches played within 3 days of each other
         cursor = db.execute('''
             SELECT DISTINCT match_date 
             FROM matches 
-            WHERE odds_home_b365 IS NOT NULL
+            WHERE match_date >= ?
+            AND match_date < ?
+            AND odds_home_b365 IS NOT NULL
             AND odds_home_b365 > 1
             ORDER BY match_date DESC
-        ''')
+        ''', (season_start, today))
         all_dates = [row['match_date'] for row in cursor.fetchall()]
         
-        # Fallback: get dates without odds filter
+        # Fallback: get dates without odds filter but still current season
         if not all_dates:
             cursor = db.execute('''
                 SELECT DISTINCT match_date 
                 FROM matches 
+                WHERE match_date >= ?
+                AND match_date < ?
                 ORDER BY match_date DESC
-            ''')
+            ''', (season_start, today))
+            all_dates = [row['match_date'] for row in cursor.fetchall()]
+        
+        # Second fallback: any recent completed matches
+        if not all_dates:
+            cursor = db.execute('''
+                SELECT DISTINCT match_date 
+                FROM matches 
+                WHERE match_date < ?
+                ORDER BY match_date DESC
+                LIMIT 100
+            ''', (today,))
             all_dates = [row['match_date'] for row in cursor.fetchall()]
         
         if not all_dates:
@@ -3456,15 +3487,19 @@ def backtest():
         if not all_matches:
             return jsonify({'error': 'No matches found for backtesting'}), 404
         
+        # Determine season string
+        season_str = f"{season_start_year}/{season_start_year + 1 - 2000}"
+        
         results = {
             'model': model,
+            'season': season_str,
             'gameweeks_analyzed': len(gameweek_dates),
             'stake_per_bet': stake,
             'total_matches': len(all_matches),
             'using_actual_odds': using_actual_odds,
             'exchange_adjusted': True,
             'exchange_multiplier': round(EXCHANGE_ODDS_MULTIPLIER, 4),
-            'methodology': f'Gameweek-based point-in-time analysis ({len(gameweek_dates)} gameweeks)',
+            'methodology': f'Season {season_str} - Gameweek-based point-in-time analysis ({len(gameweek_dates)} completed gameweeks)',
             'date_range': f"{gameweek_dates[-1][-1] if gameweek_dates else 'N/A'} to {gameweek_dates[0][0] if gameweek_dates else 'N/A'}",
             'bets_placed': 0,
             'bets_won': 0,
